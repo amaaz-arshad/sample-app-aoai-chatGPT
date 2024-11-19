@@ -201,3 +201,25 @@ sup {
     margin-bottom: 5px;
   }
 }
+
+.followup {
+  padding: 0 10px;
+}
+
+.followupHeading {
+  font-weight: bold;
+  margin-bottom: 10px;
+}
+
+.followupSingle {
+  background-color: rgb(244, 244, 244);
+  padding: 5px;
+  border-radius: 5px;
+  margin-bottom: 10px;
+  border: 1px solid silver;
+  cursor: pointer;
+}
+
+.followupSingle:hover {
+  background-color: rgb(230, 230, 230);
+}

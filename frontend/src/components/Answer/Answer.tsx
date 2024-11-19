@@ -20,9 +20,10 @@ interface Props {
   answer: AskResponse
   onCitationClicked: (citedDocument: Citation) => void
   onExectResultClicked: (answerId: string) => void
+  sendFollowupQuestion: (question: string) => void
 }
 
-export const Answer = ({ answer, onCitationClicked, onExectResultClicked }: Props) => {
+export const Answer = ({ answer, onCitationClicked, onExectResultClicked, sendFollowupQuestion }: Props) => {
   const initializeAnswerFeedback = (answer: AskResponse) => {
     if (answer.message_id == undefined) return undefined
     if (answer.feedback == undefined) return undefined
@@ -35,6 +36,12 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked }: Prop
   const filePathTruncationLimit = 50
 
   const parsedAnswer = useMemo(() => parseAnswer(answer), [answer])
+  const answerOnly = parsedAnswer?.markdownFormatText?.includes('Anschlussfragen:')
+    ? parsedAnswer.markdownFormatText.split('Anschlussfragen:')[0]
+    : parsedAnswer?.markdownFormatText
+  const followups = parsedAnswer?.markdownFormatText?.includes('Anschlussfragen:')
+    ? (parsedAnswer.markdownFormatText.split('Anschlussfragen:')[1] || '').split('- ')
+    : []
   const [chevronIsExpanded, setChevronIsExpanded] = useState(isRefAccordionOpen)
   const [feedbackState, setFeedbackState] = useState(initializeAnswerFeedback(answer))
   const [isFeedbackDialogOpen, setIsFeedbackDialogOpen] = useState(false)
@@ -83,6 +90,48 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked }: Prop
       citationFilename = `Citation ${index}`
     }
     return citationFilename
+  }
+
+  // const createCitationFilepath = (citation: Citation, index: number, truncate: boolean = false) => {
+  //   let citationFilename = ''
+
+  //   if (citation.filepath) {
+  //     const part_i = citation.part_index ?? (citation.chunk_id ? parseInt(citation.chunk_id) + 1 : '')
+  //     if (truncate && citation.filepath.length > filePathTruncationLimit) {
+  //       const citationLength = citation.filepath.length
+  //       citationFilename = `${citation.filepath.substring(0, 20)}...${citation.filepath.substring(citationLength - 20)}`
+  //     } else {
+  //       citationFilename = `${citation.filepath}`
+  //     }
+  //   } else if (citation.filepath && citation.reindex_id) {
+  //     citationFilename = `${citation.filepath}`
+  //   } else {
+  //     citationFilename = `Citation ${index}`
+  //   }
+  //   citationFilename = `https://pinkvoss-verlag-staging.publishone.nl/document/${citationFilename}/content`
+  //   return citationFilename
+  // }
+
+  const createCitationTitle = (citation: Citation, index: number, truncate: boolean = false) => {
+    let citationTitle = ''
+    console.log('citation.part_index', citation.part_index)
+    console.log('citation.reindex_id', citation.reindex_id)
+    console.log('citation.id', citation.id)
+
+    if (citation.title) {
+      const part_i = citation.part_index ?? (citation.chunk_id ? parseInt(citation.chunk_id) + 1 : '')
+      if (truncate && citation.title.length > filePathTruncationLimit) {
+        const citationLength = citation.title.length
+        citationTitle = `${citation.title.substring(0, 20)}...${citation.title.substring(citationLength - 20)} - Part ${part_i}`
+      } else {
+        citationTitle = part_i == 1 ? citation.title : `${citation.title} - Part ${part_i}`
+      }
+    } else if (citation.title && citation.reindex_id) {
+      citationTitle = citation.reindex_id == '1' ? citation.title : `${citation.title} - Part ${citation.reindex_id}`
+    } else {
+      citationTitle = `Citation ${index}`
+    }
+    return citationTitle
   }
 
   const onLikeResponseClicked = async () => {
@@ -227,7 +276,7 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked }: Prop
   }
 
   const components = {
-    code({ node, ...props }: { node: any;[key: string]: any }) {
+    code({ node, ...props }: { node: any; [key: string]: any }) {
       let language
       if (props.className) {
         const match = props.className.match(/language-(\w+)/)
@@ -247,17 +296,34 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked }: Prop
         <Stack.Item>
           <Stack horizontal grow>
             <Stack.Item grow>
-              {parsedAnswer && <ReactMarkdown
-                linkTarget="_blank"
-                remarkPlugins={[remarkGfm, supersub]}
-                children={
-                  SANITIZE_ANSWER
-                    ? DOMPurify.sanitize(parsedAnswer?.markdownFormatText, { ALLOWED_TAGS: XSSAllowTags, ALLOWED_ATTR: XSSAllowAttributes })
-                    : parsedAnswer?.markdownFormatText
-                }
-                className={styles.answerText}
-                components={components}
-              />}
+              {parsedAnswer && (
+                <>
+                  <ReactMarkdown
+                    linkTarget="_blank"
+                    remarkPlugins={[remarkGfm, supersub]}
+                    children={
+                      SANITIZE_ANSWER
+                        ? DOMPurify.sanitize(answerOnly ?? '', {
+                            ALLOWED_TAGS: XSSAllowTags,
+                            ALLOWED_ATTR: XSSAllowAttributes
+                          })
+                        : answerOnly ?? ''
+                    }
+                    className={styles.answerText}
+                    components={components}
+                  />
+                  <div className={styles.followup}>
+                    {followups.length > 0 && <div className={styles.followupHeading}>Anschlussfragen:</div>}
+                    {followups
+                      .filter(question => question.trim())
+                      .map(question => (
+                        <div className={styles.followupSingle} onClick={() => sendFollowupQuestion(question)}>
+                          {question}
+                        </div>
+                      ))}
+                  </div>
+                </>
+              )}
             </Stack.Item>
             <Stack.Item className={styles.answerHeader}>
               {FEEDBACK_ENABLED && answer.message_id !== undefined && (
@@ -268,7 +334,7 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked }: Prop
                     onClick={() => onLikeResponseClicked()}
                     style={
                       feedbackState === Feedback.Positive ||
-                        appStateContext?.state.feedbackState[answer.message_id] === Feedback.Positive
+                      appStateContext?.state.feedbackState[answer.message_id] === Feedback.Positive
                         ? { color: 'darkgreen', cursor: 'pointer' }
                         : { color: 'slategray', cursor: 'pointer' }
                     }
@@ -279,8 +345,8 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked }: Prop
                     onClick={() => onDislikeResponseClicked()}
                     style={
                       feedbackState !== Feedback.Positive &&
-                        feedbackState !== Feedback.Neutral &&
-                        feedbackState !== undefined
+                      feedbackState !== Feedback.Neutral &&
+                      feedbackState !== undefined
                         ? { color: 'darkred', cursor: 'pointer' }
                         : { color: 'slategray', cursor: 'pointer' }
                     }
@@ -324,7 +390,7 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked }: Prop
             </Stack.Item>
           )}
           <Stack.Item className={styles.answerDisclaimerContainer}>
-            <span className={styles.answerDisclaimer}>AI-generated content may be incorrect</span>
+            <span className={styles.answerDisclaimer}>AI-generierter Inhalt kann fehlerhaft sein</span>
           </Stack.Item>
           {!!answer.exec_results?.length && (
             <Stack.Item onKeyDown={e => (e.key === 'Enter' || e.key === ' ' ? toggleIsRefAccordionOpen() : null)}>
@@ -336,15 +402,9 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked }: Prop
                     aria-label="Open Intents"
                     tabIndex={0}
                     role="button">
-                    <span>
-                      Show Intents
-                    </span>
+                    <span>Show Intents</span>
                   </Text>
-                  <FontIcon
-                    className={styles.accordionIcon}
-                    onClick={handleChevronClick}
-                    iconName={'ChevronRight'}
-                  />
+                  <FontIcon className={styles.accordionIcon} onClick={handleChevronClick} iconName={'ChevronRight'} />
                 </Stack>
               </Stack>
             </Stack.Item>
@@ -353,6 +413,9 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked }: Prop
         {chevronIsExpanded && (
           <div className={styles.citationWrapper}>
             {parsedAnswer?.citations.map((citation, idx) => {
+              // const citationFilepath = createCitationFilepath(citation, idx)
+              // const citationTitle = createCitationTitle(citation, idx)
+
               return (
                 <span
                   title={createCitationFilepath(citation, ++idx)}
@@ -367,6 +430,21 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked }: Prop
                   {createCitationFilepath(citation, idx, true)}
                 </span>
               )
+
+              // return (
+              //   <span
+              //     title={citationTitle}
+              //     tabIndex={0}
+              //     role="link"
+              //     key={idx}
+              //     onClick={() => window.open(citationFilepath, '_blank')} // Open citation URL in a new tab
+              //     onKeyDown={e => (e.key === 'Enter' || e.key === ' ' ? window.open(citationFilepath, '_blank') : null)} // Handle keyboard navigation
+              //     className={styles.citationContainer}
+              //     aria-label={citationTitle}>
+              //     <div className={styles.citation}>{idx + 1}</div> {/* Adjusted to start index from 1 */}
+              //     {citationTitle}
+              //   </span>
+              // )
             })}
           </div>
         )}

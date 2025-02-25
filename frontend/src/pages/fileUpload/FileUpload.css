@@ -1,0 +1,110 @@
+.main-container {
+  background-color: white;
+  padding: 40px;
+}
+
+.card-title {
+  font-weight: bold;
+}
+
+.progress {
+  height: 25px;
+}
+
+.progress-bar {
+  font-size: 0.9rem;
+  line-height: 25px;
+}
+
+.table td {
+  word-break: break-word;
+}
+
+/* file upload css */
+
+.file-upload-container {
+  font-family: Arial, sans-serif;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 20px;
+  border: 1px solid #ccc;
+  border-radius: 10px;
+  background-color: #f9f9f9;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+h2 {
+  text-align: center;
+  color: #333;
+  margin-bottom: 20px;
+}
+
+.upload-section {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.file-input {
+  flex: 1;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  margin-right: 10px;
+  font-size: 14px;
+}
+
+.upload-button {
+  padding: 10px 20px;
+  background-color: #007bff;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background-color 0.3s ease;
+}
+
+.upload-button[disabled] {
+  background-color: #cccccc;
+  cursor: not-allowed;
+}
+
+.upload-button:hover {
+  background-color: #0056b3;
+}
+
+.file-list {
+  background-color: #fff;
+  padding: 15px;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+}
+
+.file-list h3 {
+  margin-top: 0;
+  color: #555;
+}
+
+.file-list ul {
+  list-style: none;
+  padding: 0;
+}
+
+.file-list ul li {
+  padding: 5px 0;
+  border-bottom: 1px solid #ddd;
+}
+
+.file-list ul li:last-child {
+  border-bottom: none;
+}
+
+.file-list ul li span {
+  display: block; /* Ensure the span takes up the available space */
+  max-width: 90%; /* Adjust this value based on the desired width */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

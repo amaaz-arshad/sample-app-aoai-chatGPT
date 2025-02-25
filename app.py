@@ -5,6 +5,11 @@ import logging
 import uuid
 import httpx
 import asyncio
+import requests
+# from azure.ai.documentintelligence import DocumentIntelligenceClient
+from azure.core.credentials import AzureKeyCredential
+from azure.search.documents import SearchClient
+from azure.storage.blob import BlobServiceClient
 from quart import (
     Blueprint,
     Quart,
@@ -35,6 +40,44 @@ from backend.utils import (
     convert_to_pf_format,
     format_pf_non_streaming_response,
 )
+from dotenv import load_dotenv
+import pymupdf4llm
+import time
+import tempfile
+
+load_dotenv() 
+
+# Azure OpenAI API endpoint and key
+openai_api_base = app_settings.azure_openai.endpoint
+openai_api_key = app_settings.azure_openai.key
+openai_api_version = app_settings.azure_openai.preview_api_version
+print(f"openai_api_version:",openai_api_version)
+embedding_deployment = app_settings.azure_openai.embedding_name
+# embedding_deployment = "text-embedding-3-large"
+
+# Azure Cognitive Search endpoint, index name, and API key
+service_endpoint = app_settings.datasource.model_dump(by_alias=True).get("endpoint")
+print(f"service_endpoint:",service_endpoint)
+# index_name = "pdf-large-vector-index"
+index_name = app_settings.datasource.model_dump(by_alias=True).get("index_name")
+print(f"index_name:",index_name)
+api_key = os.getenv("AZURE_SEARCH_KEY")
+
+# Azure Blob Storage endpoint and container
+blob_service_url = os.getenv("A_AZURE_BLOB_URL")
+# container_name = "pdf-container2"
+container_name = os.getenv("A_AZURE_BLOB_CONTAINER_NAME")
+storage_key = os.getenv("A_AZURE_BLOB_STORAGE_KEY")
+blob_service_client = BlobServiceClient(account_url=blob_service_url, credential=storage_key)
+
+# Create a SearchClient instance
+search_client = SearchClient(service_endpoint, index_name, AzureKeyCredential(api_key))
+
+# Initialize the Document Intelligence Client
+# document_intelligence_client = DocumentIntelligenceClient(
+#     endpoint=os.getenv("A_AZURE_DOC_INTELLIGENCE_ENDPOINT"), 
+#     credential=AzureKeyCredential(os.getenv("A_AZURE_DOC_INTELLIGENCE_KEY"))
+# )
 
 bp = Blueprint("routes", __name__, static_folder="static", template_folder="static")
 
@@ -45,6 +88,8 @@ def create_app():
     app = Quart(__name__)
     app.register_blueprint(bp)
     app.config["TEMPLATES_AUTO_RELOAD"] = True
+    # Allow files up to 1000MB
+    app.config["MAX_CONTENT_LENGTH"] = 1000 * 1024 * 1024
     
     @app.before_serving
     async def init():
@@ -255,11 +300,26 @@ def prepare_model_args(request_body, request_headers):
     }
 
     if app_settings.datasource:
+        # Get the existing data source configuration
+        data_source_config = app_settings.datasource.construct_payload_configuration(request=request)
+
+        # Ensure "parameters" exists in the data source configuration
+        if "parameters" not in data_source_config:
+            data_source_config["parameters"] = {}
+
+        # Get the companyName from the request body
+        companyName = request_body.get("companyName")
+
+        # Apply the filter only if companyName has a value
+        if companyName:
+            # Convert companyName to lowercase
+            companyName = companyName.lower()
+            data_source_config["parameters"]["filter"] = f"organization eq '{companyName}'"
+
+        # Store the configuration into the extra_body
         model_args["extra_body"] = {
             "data_sources": [
-                app_settings.datasource.construct_payload_configuration(
-                    request=request
-                )
+                data_source_config
             ]
         }
 
@@ -882,4 +942,249 @@ async def generate_title(conversation_messages) -> str:
         return messages[-2]["content"]
 
 
+# Function to generate embeddings using OpenAI API
+def generate_embeddings(content):
+    url = f"{openai_api_base}openai/deployments/{embedding_deployment}/embeddings?api-version={openai_api_version}"
+    headers = {
+        "Content-Type": "application/json",
+        "api-key": openai_api_key,
+    }
+    data = {
+        "input": content,
+    }
+    response = requests.post(url, headers=headers, json=data)
+    response.raise_for_status()
+    return response.json().get("data", [])[0].get("embedding", [])
+
+
+# Function to upload a PDF to Blob Storage
+def upload_to_blob_storage(blob_client, file_data):
+    blob_client.upload_blob(file_data, overwrite=True)
+    
+    
+@bp.route("/pipeline/list", methods=["GET"])
+async def list_files():
+    container_client = blob_service_client.get_container_client(container=container_name)
+    blob_list = [blob.name for blob in container_client.list_blobs()]
+    return {"files": blob_list}
+
+# parsing documents with llama index version
+@bp.route("/pipeline/upload", methods=["POST"])
+async def upload_files():
+    # Await the form and files to retrieve their data
+    form = await request.form
+    # files = await request.files
+    files = (await request.files).getlist("files")
+    
+    print(files)
+
+    # Retrieve the 'organization' field from the form data
+    organization = form.get("organization")
+
+    processed_files = []
+    skipped_files = []
+
+    # Normalize the organization name to lowercase and trim spaces
+    organization_folder = organization.strip().lower()
+
+    for uploaded_file in files:
+        print(f"uploaded_file {uploaded_file}")
+        file_name = uploaded_file.filename
+        # Create the path for the file inside the folder based on organization
+        blob_path = f"{organization_folder}/{file_name}"  # folder_name/file_name
+
+        blob_client = blob_service_client.get_blob_client(
+            container=container_name, blob=blob_path
+        )
+
+        # Check if the file already exists in the blob container
+        if blob_client.exists():
+            skipped_files.append(file_name)
+            continue
+
+        # Create a NamedTemporaryFile with delete=False
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+        temp_file_path = temp_file.name
+
+        try:
+            # Write the uploaded file's bytes to the temp file
+            await uploaded_file.save(temp_file_path)
+
+            if os.path.getsize(temp_file_path) == 0:
+                return jsonify({"detail": f"Uploaded file {file_name} is empty."}), 400
+
+            # Process the file with LlamaMarkdownReader
+            try:
+                llama_docs = pymupdf4llm.LlamaMarkdownReader().load_data(temp_file_path)
+            except Exception as e:
+                return jsonify({"detail": f"Failed to process file {file_name}: {str(e)}"}), 500
+
+            # Build doc array and upload to Azure Cognitive Search
+            docs_array = []
+            for doc in llama_docs:
+                doc_dict = doc.dict()
+                metadata = doc_dict.get("metadata", {})
+                page = metadata.get("page")
+                total_pages = metadata.get("total_pages")
+                title_with_pages = f"Page {page} of {total_pages}"
+                content = doc_dict.get("text", "")
+
+                content_vector = generate_embeddings(content)
+
+                transformed_doc = {
+                    "id": doc_dict.get("id_"),
+                    "organization": organization,
+                    "title": title_with_pages,
+                    "page": page,
+                    "total_pages": total_pages,
+                    "file": file_name,
+                    "content": content,
+                    "contentVector": content_vector,
+                }
+                docs_array.append(transformed_doc)
+
+            try:
+                search_client.upload_documents(docs_array)
+            except Exception as e:
+                return jsonify({"detail": f"Indexing failed for {file_name}: {str(e)}"}), 500
+
+            # Upload the file to Blob Storage inside the folder
+            with open(temp_file_path, "rb") as f:
+                pdf_data = f.read()
+            blob_client.upload_blob(pdf_data, overwrite=True)
+
+            processed_files.append(file_name)
+
+        finally:
+            # Retry loop to safely remove the temp file on Windows
+            for i in range(5):
+                try:
+                    if os.path.exists(temp_file_path):
+                        os.remove(temp_file_path)
+                    break
+                except PermissionError:
+                    time.sleep(0.5)
+
+    return jsonify({
+        "processed_files": processed_files,
+        "skipped_files": skipped_files
+    })
+    
+# Route to delete all files or files by companyClaim or organizationFilter
+@bp.route("/pipeline/delete_all", methods=["DELETE"])
+async def delete_all():
+    form = await request.form  # Await the form coroutine to get the form data
+    organizationFilter = form.get("organizationFilter")
+    companyClaim = form.get("companyClaim")
+
+    container_client = blob_service_client.get_container_client(container=container_name)
+    blob_list = list(container_client.list_blobs())
+
+    files_to_delete = []
+    if companyClaim:
+        files_to_delete = [blob.name for blob in blob_list if blob.name.startswith(f"{companyClaim.strip().lower()}/")]
+    else:
+        if organizationFilter == "all":
+            files_to_delete = [blob.name for blob in blob_list]
+        else:
+            files_to_delete = [blob.name for blob in blob_list if blob.name.startswith(f"{organizationFilter.strip().lower()}/")]
+
+    for file in files_to_delete:
+        container_client.delete_blob(file)
+
+    results = search_client.search(search_text="*")
+    keys_to_delete = []
+
+    for doc in results:
+        if companyClaim:
+            if doc.get("organization") == companyClaim.strip().lower():
+                keys_to_delete.append(doc["id"])
+        else:
+            if organizationFilter == "all" or doc.get("organization") == organizationFilter.strip().lower():
+                keys_to_delete.append(doc["id"])
+
+    if keys_to_delete:
+        batch = [{"@search.action": "delete", "id": key} for key in keys_to_delete]
+        search_client.upload_documents(documents=batch)
+
+    return jsonify({
+        "message": f"Deleted {len(files_to_delete)} files and {len(keys_to_delete)} documents based on the filter criteria."
+    })
+
+# Route to delete a specific file
+@bp.route("/pipeline/delete_file/<path:filename>", methods=["DELETE"])
+async def delete_single_file(filename):
+    container_client = blob_service_client.get_container_client(container=container_name)
+    blob_client = container_client.get_blob_client(filename)
+
+    if blob_client.exists():
+        blob_client.delete_blob()
+    else:
+        return jsonify({"message": f"The file '{filename}' was not found in the blob container."}), 404
+
+    results = search_client.search(search_text="*")
+    keys_to_delete = []
+    for doc in results:
+        if doc.get("file") == os.path.basename(filename):
+            folder_name = filename.split("/")[0]
+            if doc.get("organization") == folder_name:
+                keys_to_delete.append(doc["id"])
+
+    if keys_to_delete:
+        batch = [{"@search.action": "delete", "id": key} for key in keys_to_delete]
+        search_client.upload_documents(documents=batch)
+        return jsonify({"message": f"File '{filename}' and all related documents have been deleted."})
+    else:
+        return jsonify({"message": f"File '{filename}' was deleted from blob storage, but no matching documents were found in the index."})
+
+@bp.route("/table_data", methods=["GET"])
+async def table_data():
+    # Get the authenticated user details
+    authenticated_user = get_authenticated_user_details(request.headers)
+    print(authenticated_user)
+    # user_id = authenticated_user["user_principal_id"]
+    user_id = "fd8edaa6-cb49-4bc7-a096-fc3ba87aa9d2"
+
+    if not current_app.cosmos_conversation_client:
+        return jsonify({"error": "CosmosDB is not configured or not working"}), 500
+
+    # Get a list of conversations for this user (adjust offset/limit as needed)
+    conversations = await current_app.cosmos_conversation_client.get_conversations(user_id, offset=0, limit=100)
+    table_rows = []
+
+    for conv in conversations:
+        conversation_id = conv["id"]
+        # Get messages for each conversation
+        conversation_messages = await current_app.cosmos_conversation_client.get_messages(user_id, conversation_id)
+        
+        # Initialize empty fields
+        system_message = ""
+        user_prompt = ""
+        assistant_answer = ""
+        timestamp = "" 
+
+        for msg in conversation_messages:
+            role = msg.get("role", "")
+            if role == "system" and not system_message:
+                system_message = msg.get("content", "")
+            elif role == "user" and not user_prompt:
+                user_prompt = msg.get("content", "")
+            elif role == "assistant" and not assistant_answer:
+                assistant_answer = msg.get("content", "")
+                timestamp = msg.get("createdAt", "")  # Using the assistant answer timestamp
+            # Stop if both a user prompt and assistant answer have been found
+            if user_prompt and assistant_answer:
+                break
+
+        # Only add rows that have at least a user prompt and an assistant answer.
+        if user_prompt and assistant_answer:
+            table_rows.append({
+                "timestamp": timestamp,
+                "system_message": system_message,
+                "user_prompt": user_prompt,
+                "assistant_answer": assistant_answer
+            })
+
+    return jsonify(table_rows), 200
+    
 app = create_app()

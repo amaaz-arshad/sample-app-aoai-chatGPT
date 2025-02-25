@@ -1,0 +1,76 @@
+# Endpoint to upload and process files
+@bp.route("/pipeline/upload", methods=["POST"])
+async def upload_files():
+    form = await request.form
+    files = (await request.files).getlist("files")
+    organization = form.get("organization")
+
+    if not organization:
+        return jsonify({"detail": "Missing organization field."}), 400
+
+    processed_files = []
+    skipped_files = []
+    organization_folder = organization.strip().lower()
+
+    for uploaded_file in files:
+        file_name = uploaded_file.filename
+        blob_path = f"{organization_folder}/{file_name}"
+        blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_path)
+
+        if blob_client.exists():
+            skipped_files.append(file_name)
+            continue
+
+        try:
+            file_bytes = uploaded_file.read()
+            
+            if len(file_bytes) == 0:
+                return jsonify({"detail": f"Uploaded file {file_name} is empty."}), 400
+
+            try:
+                poller = document_intelligence_client.begin_analyze_document(
+                    "prebuilt-layout", file_bytes, output_content_format="markdown"
+                )
+                result = poller.result()
+                markdown_output = result.content
+                pages = markdown_output.split("<!-- PageBreak -->")
+
+                docs_array = []
+                for idx, page in enumerate(pages, start=1):
+                    page_content = page.strip()
+                    content_vector = generate_embeddings(page_content)
+                    doc_id = str(uuid.uuid4())
+
+                    transformed_doc = {
+                        "id": doc_id,
+                        "organization": organization,
+                        "title": f"Page {idx} of {len(pages)}",
+                        "page": idx,
+                        "total_pages": len(pages),
+                        "file": file_name,
+                        "content": page_content,
+                        "contentVector": content_vector,
+                    }
+                    docs_array.append(transformed_doc)
+
+                try:
+                    search_client.upload_documents(docs_array)
+                except Exception as e:
+                    print(f"Indexing failed for {file_name}: {str(e)}")
+                    return jsonify({"detail": f"Indexing failed for {file_name}: {str(e)}"}), 500
+
+                upload_to_blob_storage(blob_client, file_bytes)
+                processed_files.append(file_name)
+            except Exception as e:
+                print(f"Error processing file {file_name}: {str(e)}")
+                return jsonify({"detail": f"Error processing file {file_name}: {str(e)}"}), 500
+
+        except Exception as e:
+            print(f"Error processing file {file_name}: {str(e)}")
+            return jsonify({"detail": f"Error processing file {file_name}: {str(e)}"}), 500
+
+    return jsonify({
+        "processed_files": processed_files,
+        "skipped_files": skipped_files
+    })
+    

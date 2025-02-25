@@ -1,0 +1,101 @@
+# parsing documents with llama index version
+@bp.route("/pipeline/upload", methods=["POST"])
+async def upload_files():
+    # Await the form and files to retrieve their data
+    form = await request.form
+    # files = await request.files
+    files = (await request.files).getlist("files")
+    
+    print(files)
+
+    # Retrieve the 'organization' field from the form data
+    organization = form.get("organization")
+
+    processed_files = []
+    skipped_files = []
+
+    # Normalize the organization name to lowercase and trim spaces
+    organization_folder = organization.strip().lower()
+
+    for uploaded_file in files:
+        print(f"uploaded_file {uploaded_file}")
+        file_name = uploaded_file.filename
+        # Create the path for the file inside the folder based on organization
+        blob_path = f"{organization_folder}/{file_name}"  # folder_name/file_name
+
+        blob_client = blob_service_client.get_blob_client(
+            container=container_name, blob=blob_path
+        )
+
+        # Check if the file already exists in the blob container
+        if blob_client.exists():
+            skipped_files.append(file_name)
+            continue
+
+        # Create a NamedTemporaryFile with delete=False
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+        temp_file_path = temp_file.name
+
+        try:
+            # Write the uploaded file's bytes to the temp file
+            await uploaded_file.save(temp_file_path)
+
+            if os.path.getsize(temp_file_path) == 0:
+                return jsonify({"detail": f"Uploaded file {file_name} is empty."}), 400
+
+            # Process the file with LlamaMarkdownReader
+            try:
+                llama_docs = pymupdf4llm.LlamaMarkdownReader().load_data(temp_file_path)
+            except Exception as e:
+                return jsonify({"detail": f"Failed to process file {file_name}: {str(e)}"}), 500
+
+            # Build doc array and upload to Azure Cognitive Search
+            docs_array = []
+            for doc in llama_docs:
+                doc_dict = doc.dict()
+                metadata = doc_dict.get("metadata", {})
+                page = metadata.get("page")
+                total_pages = metadata.get("total_pages")
+                title_with_pages = f"Page {page} of {total_pages}"
+                content = doc_dict.get("text", "")
+
+                content_vector = generate_embeddings(content)
+
+                transformed_doc = {
+                    "id": doc_dict.get("id_"),
+                    "organization": organization,
+                    "title": title_with_pages,
+                    "page": page,
+                    "total_pages": total_pages,
+                    "file": file_name,
+                    "content": content,
+                    "contentVector": content_vector,
+                }
+                docs_array.append(transformed_doc)
+
+            try:
+                search_client.upload_documents(docs_array)
+            except Exception as e:
+                return jsonify({"detail": f"Indexing failed for {file_name}: {str(e)}"}), 500
+
+            # Upload the file to Blob Storage inside the folder
+            with open(temp_file_path, "rb") as f:
+                pdf_data = f.read()
+            blob_client.upload_blob(pdf_data, overwrite=True)
+
+            processed_files.append(file_name)
+
+        finally:
+            # Retry loop to safely remove the temp file on Windows
+            for i in range(5):
+                try:
+                    if os.path.exists(temp_file_path):
+                        os.remove(temp_file_path)
+                    break
+                except PermissionError:
+                    time.sleep(0.5)
+
+    return jsonify({
+        "processed_files": processed_files,
+        "skipped_files": skipped_files
+    })

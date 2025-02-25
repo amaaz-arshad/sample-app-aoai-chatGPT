@@ -12,7 +12,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { nord } from 'react-syntax-highlighter/dist/esm/styles/prism'
 
 import styles from './Chat.module.css'
-import Contoso from '../../assets/Contoso.svg'
+import Snap from '../../assets/Snap.svg'
 import { XSSAllowTags } from '../../constants/sanatizeAllowables'
 
 import {
@@ -31,13 +31,15 @@ import {
   ChatHistoryLoadingState,
   CosmosDBStatus,
   ErrorMessage,
-  ExecResults
+  ExecResults,
+  UserInfo
 } from '../../api'
 import { Answer } from '../../components/Answer'
 import { QuestionInput } from '../../components/QuestionInput'
 import { ChatHistoryPanel } from '../../components/ChatHistory/ChatHistoryPanel'
 import { AppStateContext } from '../../state/AppProvider'
 import { useBoolean } from '@fluentui/react-hooks'
+import { USER_ATTRIBUTE } from '../../constants/variables'
 
 const enum messageStatus {
   NotRunning = 'Not Running',
@@ -65,6 +67,7 @@ const Chat = () => {
   const [errorMsg, setErrorMsg] = useState<ErrorMessage | null>()
   const [logo, setLogo] = useState('')
   const [answerId, setAnswerId] = useState<string>('')
+  const [userDetails, setUserDetails] = useState<UserInfo[]>([])
 
   const errorDialogContentProps = {
     type: DialogType.close,
@@ -108,7 +111,7 @@ const Chat = () => {
 
   useEffect(() => {
     if (!appStateContext?.state.isLoading) {
-      setLogo(ui?.chat_logo || ui?.logo || Contoso)
+      setLogo(ui?.chat_logo || ui?.logo || Snap)
     }
   }, [appStateContext?.state.isLoading])
 
@@ -122,6 +125,7 @@ const Chat = () => {
       return
     }
     const userInfoList = await getUserInfo()
+    setUserDetails(userInfoList)
     if (userInfoList.length === 0 && window.location.hostname !== '127.0.0.1') {
       setShowAuthMessage(true)
     } else {
@@ -336,12 +340,21 @@ const Chat = () => {
       date: new Date().toISOString()
     }
 
+    const companyClaim = 
+      Array.isArray(userDetails) &&
+      userDetails.length > 0 &&
+      Array.isArray(userDetails[0].user_claims) 
+        ? userDetails[0].user_claims.find(claim => claim.typ === USER_ATTRIBUTE) 
+        : null;
+    const companyName = companyClaim && companyClaim.val ? companyClaim.val : null;
+    console.log(userDetails)
+    console.log("companyname:", companyName)
     let request: ConversationRequest
     let conversation
     if (conversationId) {
       conversation = appStateContext?.state?.chatHistory?.find(conv => conv.id === conversationId)
       if (!conversation) {
-        console.error('Conversation not found 2.')
+        console.error('Conversation not found.')
         setIsLoading(false)
         setShowLoadingMessage(false)
         abortFuncs.current = abortFuncs.current.filter(a => a !== abortController)
@@ -349,12 +362,14 @@ const Chat = () => {
       } else {
         conversation.messages.push(userMessage)
         request = {
-          messages: [...conversation.messages.filter(answer => answer.role !== ERROR)]
+          messages: [...conversation.messages.filter(answer => answer.role !== ERROR)],
+          companyName
         }
       }
     } else {
       request = {
-        messages: [userMessage].filter(answer => answer.role !== ERROR)
+        messages: [userMessage].filter(answer => answer.role !== ERROR),
+        companyName
       }
       setMessages(request.messages)
     }
@@ -378,7 +393,7 @@ const Chat = () => {
         if (conversationId) {
           resultConversation = appStateContext?.state?.chatHistory?.find(conv => conv.id === conversationId)
           if (!resultConversation) {
-            console.error('Conversation not found 3.')
+            console.error('Conversation not found.')
             setIsLoading(false)
             setShowLoadingMessage(false)
             abortFuncs.current = abortFuncs.current.filter(a => a !== abortController)
@@ -447,7 +462,7 @@ const Chat = () => {
         if (conversationId) {
           resultConversation = appStateContext?.state?.chatHistory?.find(conv => conv.id === conversationId)
           if (!resultConversation) {
-            console.error('Conversation not found 4.')
+            console.error('Conversation not found.')
             setIsLoading(false)
             setShowLoadingMessage(false)
             abortFuncs.current = abortFuncs.current.filter(a => a !== abortController)

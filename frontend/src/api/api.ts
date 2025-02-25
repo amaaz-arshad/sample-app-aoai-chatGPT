@@ -1,6 +1,11 @@
+import axios from 'axios'
 import { chatHistorySampleData } from '../constants/chatHistory'
 
 import { ChatMessage, Conversation, ConversationRequest, CosmosDBHealth, CosmosDBStatus, UserInfo } from './models'
+
+interface FileUploadResponse {
+  files: string[];
+}
 
 export async function conversationApi(options: ConversationRequest, abortSignal: AbortSignal): Promise<Response> {
   const response = await fetch('/conversation', {
@@ -121,11 +126,13 @@ export const historyGenerate = async (
   if (convId) {
     body = JSON.stringify({
       conversation_id: convId,
-      messages: options.messages
+      messages: options.messages,
+      companyName: options.companyName
     })
   } else {
     body = JSON.stringify({
-      messages: options.messages
+      messages: options.messages,
+      companyName: options.companyName
     })
   }
   const response = await fetch('/history/generate', {
@@ -351,4 +358,46 @@ export const historyMessageFeedback = async (messageId: string, feedback: string
       return errRes
     })
   return response
+}
+
+// API call to fetch files for file upload
+export async function fetchFiles(): Promise<FileUploadResponse> {
+  try {
+    const response = await axios.get<FileUploadResponse>('/pipeline/list')  // Relative URL
+    return response.data
+  } catch (error) {
+    throw new Error('Failed to fetch files')
+  }
+}
+
+// API call for uploading files
+export async function uploadFiles(formData: FormData): Promise<FileUploadResponse> {
+  try {
+    const response = await axios.post<FileUploadResponse>('/pipeline/upload', formData, {  // Relative URL
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    })
+    return response.data
+  } catch (error) {
+    throw new Error('An error occurred during upload.')
+  }
+}
+
+// API call for deleting all files
+export async function deleteAllFiles(formData: FormData): Promise<void> {
+  try {
+    await axios.delete('/pipeline/delete_all', { data: formData })  // Relative URL
+  } catch (error) {
+    throw new Error('Failed to delete files and documents')
+  }
+}
+
+// API call for deleting a single file
+export async function deleteSingleFile(filename: string): Promise<void> {
+  try {
+    await axios.delete(`/pipeline/delete_file/${filename}`)  // Relative URL
+  } catch (error) {
+    throw new Error(`Failed to delete '${filename}' and associated documents.`)
+  }
 }

@@ -18,5 +18,5 @@ pydantic
 requests
 azure-core
 python-multipart
-# pymupdf4llm
-# llama-index
+pymupdf4llm
+llama-index

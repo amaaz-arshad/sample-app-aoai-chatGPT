@@ -44,6 +44,10 @@ from dotenv import load_dotenv
 import pymupdf4llm
 import time
 import tempfile
+# from rake_nltk import Rake
+
+# Initialize RAKE
+# rake = Rake()
 
 load_dotenv() 
 
@@ -968,15 +972,19 @@ async def list_files():
     blob_list = [blob.name for blob in container_client.list_blobs()]
     return {"files": blob_list}
 
-# parsing documents with llama index version
+# Define a function to extract keyphrases using RAKE
+# def extract_keyphrases(content):
+#     rake.extract_keywords_from_text(content)
+#     return rake.get_ranked_phrases()
+
+# Modify your existing endpoint
 @bp.route("/pipeline/upload", methods=["POST"])
 async def upload_files():
     # Await the form and files to retrieve their data
     form = await request.form
-    # files = await request.files
     files = (await request.files).getlist("files")
-    
-    print(files)
+
+    # print(files)
 
     # Retrieve the 'organization' field from the form data
     organization = form.get("organization")
@@ -1029,6 +1037,9 @@ async def upload_files():
                 title_with_pages = f"Page {page} of {total_pages}"
                 content = doc_dict.get("text", "")
 
+                # Extract keyphrases using RAKE
+                # keywords = extract_keyphrases(content)
+
                 content_vector = generate_embeddings(content)
 
                 transformed_doc = {
@@ -1040,6 +1051,7 @@ async def upload_files():
                     "file": file_name,
                     "content": content,
                     "contentVector": content_vector,
+                    # "keywords": keywords,
                 }
                 docs_array.append(transformed_doc)
 
@@ -1068,7 +1080,7 @@ async def upload_files():
     return jsonify({
         "processed_files": processed_files,
         "skipped_files": skipped_files
-    })
+    })  
     
 # Route to delete all files or files by companyClaim or organizationFilter
 @bp.route("/pipeline/delete_all", methods=["DELETE"])
@@ -1137,13 +1149,12 @@ async def delete_single_file(filename):
     else:
         return jsonify({"message": f"File '{filename}' was deleted from blob storage, but no matching documents were found in the index."})
 
-@bp.route("/table_data", methods=["GET"])
+@bp.route("/history_data", methods=["GET"])
 async def table_data():
     # Get the authenticated user details
     authenticated_user = get_authenticated_user_details(request.headers)
     print(authenticated_user)
-    # user_id = authenticated_user["user_principal_id"]
-    user_id = "fd8edaa6-cb49-4bc7-a096-fc3ba87aa9d2"
+    user_id = authenticated_user["user_principal_id"]
 
     if not current_app.cosmos_conversation_client:
         return jsonify({"error": "CosmosDB is not configured or not working"}), 500
@@ -1158,16 +1169,14 @@ async def table_data():
         conversation_messages = await current_app.cosmos_conversation_client.get_messages(user_id, conversation_id)
         
         # Initialize empty fields
-        system_message = ""
+        system_message = app_settings.azure_openai.system_message
         user_prompt = ""
         assistant_answer = ""
         timestamp = "" 
 
         for msg in conversation_messages:
             role = msg.get("role", "")
-            if role == "system" and not system_message:
-                system_message = msg.get("content", "")
-            elif role == "user" and not user_prompt:
+            if role == "user" and not user_prompt:
                 user_prompt = msg.get("content", "")
             elif role == "assistant" and not assistant_answer:
                 assistant_answer = msg.get("content", "")

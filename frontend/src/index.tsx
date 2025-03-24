@@ -15,6 +15,7 @@ import 'bootstrap/dist/js/bootstrap.min.js'
 import 'react-toastify/dist/ReactToastify.css'
 import { ToastContainer } from 'react-toastify'
 import History from './pages/history/History'
+import SystemMessage from './pages/systemMessage/SystemMessage'
 
 initializeIcons('https://res.cdn.office.net/files/fabric-cdn-prod_20240129.001/assets/icons/')
 
@@ -29,6 +30,7 @@ export default function App() {
           </Route>
           <Route path="/upload-files" element={<FileUpload />} />
           <Route path="/history" element={<History />} />
+          <Route path="/system-message" element={<SystemMessage />} />
         </Routes>
       </HashRouter>
     </AppStateProvider>

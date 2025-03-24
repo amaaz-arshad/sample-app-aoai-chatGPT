@@ -20,3 +20,4 @@ azure-core
 python-multipart
 pymupdf4llm
 llama-index
+sentence-transformers

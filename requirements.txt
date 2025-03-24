@@ -17,3 +17,4 @@ python-multipart
 pymupdf4llm
 llama-index
 azure-ai-documentintelligence==1.0.0
+sentence-transformers

@@ -44,12 +44,24 @@ from dotenv import load_dotenv
 import pymupdf4llm
 import time
 import tempfile
+from azure.cosmos import CosmosClient, PartitionKey
+from sentence_transformers import SentenceTransformer
+
 # from rake_nltk import Rake
 
 # Initialize RAKE
 # rake = Rake()
 
 load_dotenv() 
+
+# model = SentenceTransformer(app_settings.azure_openai.embedding_name)
+model = SentenceTransformer("sentence-transformers/multi-qa-mpnet-base-dot-v1")
+cosmos_account_uri = f"https://{app_settings.chat_history.account}.documents.azure.com:443/"
+
+cosmos_client = CosmosClient(cosmos_account_uri, credential=os.getenv("A_AZURE_COSMOS_ACCOUNT_KEY"))
+collection_name = 'system_messages'
+# Define Cosmos DB collection name for storing user system messages
+USER_SYSTEM_MESSAGE_COLLECTION = "user_system_message"
 
 # Azure OpenAI API endpoint and key
 openai_api_base = app_settings.azure_openai.endpoint
@@ -255,17 +267,39 @@ async def init_cosmosdb_client():
     return cosmos_conversation_client
 
 
-def prepare_model_args(request_body, request_headers):
+async def prepare_model_args(request_body, request_headers):
     request_messages = request_body.get("messages", [])
     messages = []
+
+    # Retrieve the system message from Cosmos DB for the authenticated user
+    authenticated_user = get_authenticated_user_details(request_headers)
+    user_id = authenticated_user["user_principal_id"]
+    system_message = app_settings.azure_openai.system_message  # Fallback value in case no custom message is found
+
+    try:
+        # Get the CosmosDB container for system messages
+        database = cosmos_client.get_database_client(app_settings.chat_history.database)
+        container = database.get_container_client(USER_SYSTEM_MESSAGE_COLLECTION)
+
+        # Query for the system message for the authenticated user
+        query = f"SELECT * FROM c WHERE c.user_id = '{user_id}'"
+        results = list(container.query_items(query=query, enable_cross_partition_query=True))
+
+        if results:
+            # If a system message exists for the user, use that
+            system_message = results[0]["system_message"]
+    except Exception as e:
+        logging.error(f"Error retrieving system message for user {user_id}: {e}")
+
+    # Add the system message to the messages array
     if not app_settings.datasource:
         messages = [
             {
                 "role": "system",
-                "content": app_settings.azure_openai.system_message
+                "content": system_message 
             }
         ]
-
+    
     for message in request_messages:
         if message:
             if message["role"] == "assistant" and "context" in message:
@@ -286,7 +320,7 @@ def prepare_model_args(request_body, request_headers):
                 )
 
     user_json = None
-    if (MS_DEFENDER_ENABLED):
+    if MS_DEFENDER_ENABLED:
         authenticated_user_details = get_authenticated_user_details(request_headers)
         conversation_id = request_body.get("conversation_id", None)
         application_name = app_settings.ui.title
@@ -302,7 +336,7 @@ def prepare_model_args(request_body, request_headers):
         "model": app_settings.azure_openai.model,
         "user": user_json
     }
-
+    
     if app_settings.datasource:
         # Get the existing data source configuration
         data_source_config = app_settings.datasource.construct_payload_configuration(request=request)
@@ -311,15 +345,28 @@ def prepare_model_args(request_body, request_headers):
         if "parameters" not in data_source_config:
             data_source_config["parameters"] = {}
 
+        # Assign retrieved system message to role_information
+        data_source_config["parameters"]["role_information"] = system_message
+        
         # Get the companyName from the request body
         companyName = request_body.get("companyName")
 
         # Apply the filter only if companyName has a value
         if companyName:
             # Convert companyName to lowercase
-            companyName = companyName.lower()
+            companyName = companyName.strip().lower().strip('.')
             data_source_config["parameters"]["filter"] = f"organization eq '{companyName}'"
 
+        print("endpoint url: " + request.url_root.rstrip("/") + "/embed")
+        data_source_config["parameters"]["embedding_dependency"] = {
+            "type": "endpoint",
+            "endpoint": app_settings.azure_openai.embedding_endpoint, 
+            "authentication": {
+              "type": "api_key",
+              "key": app_settings.azure_openai.embedding_key
+            }
+        }
+        
         # Store the configuration into the extra_body
         model_args["extra_body"] = {
             "data_sources": [
@@ -363,6 +410,7 @@ def prepare_model_args(request_body, request_headers):
 
     logging.debug(f"REQUEST BODY: {json.dumps(model_args_clean, indent=4)}")
 
+    print(f"model_args: {model_args}")
     return model_args
 
 
@@ -407,7 +455,7 @@ async def send_chat_request(request_body, request_headers):
             filtered_messages.append(message)
             
     request_body['messages'] = filtered_messages
-    model_args = prepare_model_args(request_body, request_headers)
+    model_args = await prepare_model_args(request_body, request_headers)
 
     try:
         azure_openai_client = await init_openai_client()
@@ -531,6 +579,36 @@ async def add_conversation():
                 )
         else:
             raise Exception("No user message found")
+        
+        database = cosmos_client.get_database_client(app_settings.chat_history.database)
+        existing_collections = [coll['id'] for coll in database.list_containers()]
+
+        if collection_name not in existing_collections:
+            database.create_container(id=collection_name, partition_key=PartitionKey(path='/conversation_id'))
+            print(f"Created collection '{collection_name}'.")
+        else:
+            print(f"Collection '{collection_name}' already exists.")
+        
+        # Retrieve system message from the 'user_system_message' collection
+        container = database.get_container_client(USER_SYSTEM_MESSAGE_COLLECTION)
+        query = f"SELECT * FROM c WHERE c.user_id = '{user_id}'"
+        results = list(container.query_items(query=query, enable_cross_partition_query=True))
+
+        # Use the system message from the collection if it exists, otherwise fallback to default value
+        if results:
+            system_message = results[0]["system_message"]
+        else:
+            system_message = app_settings.azure_openai.system_message  # Fallback value
+
+        system_message_entry = {
+            'id': str(uuid.uuid4()),  # Unique identifier for the system message
+            'conversation_id': conversation_id,
+            'system_message': system_message
+        }
+
+        container = database.get_container_client(collection_name)
+        container.create_item(system_message_entry)
+        print(f"Inserted system message for conversation ID '{conversation_id}'.")
 
         # Submit request to Chat Completions for response
         request_body = await request.get_json()
@@ -541,7 +619,6 @@ async def add_conversation():
     except Exception as e:
         logging.exception("Exception in /history/generate")
         return jsonify({"error": str(e)}), 500
-
 
 @bp.route("/history/update", methods=["POST"])
 async def update_conversation():
@@ -947,18 +1024,18 @@ async def generate_title(conversation_messages) -> str:
 
 
 # Function to generate embeddings using OpenAI API
-def generate_embeddings(content):
-    url = f"{openai_api_base}openai/deployments/{embedding_deployment}/embeddings?api-version={openai_api_version}"
-    headers = {
-        "Content-Type": "application/json",
-        "api-key": openai_api_key,
-    }
-    data = {
-        "input": content,
-    }
-    response = requests.post(url, headers=headers, json=data)
-    response.raise_for_status()
-    return response.json().get("data", [])[0].get("embedding", [])
+# def generate_embeddings(content):
+#     url = f"{openai_api_base}openai/deployments/{embedding_deployment}/embeddings?api-version={openai_api_version}"
+#     headers = {
+#         "Content-Type": "application/json",
+#         "api-key": openai_api_key,
+#     }
+#     data = {
+#         "input": content,
+#     }
+#     response = requests.post(url, headers=headers, json=data)
+#     response.raise_for_status()
+#     return response.json().get("data", [])[0].get("embedding", [])
 
 
 # Function to upload a PDF to Blob Storage
@@ -968,8 +1045,17 @@ def upload_to_blob_storage(blob_client, file_data):
     
 @bp.route("/pipeline/list", methods=["GET"])
 async def list_files():
+    # Get the company name from the query parameter (if provided)
+    company_name = request.args.get("company", "").strip().lower().strip('.')
     container_client = blob_service_client.get_container_client(container=container_name)
-    blob_list = [blob.name for blob in container_client.list_blobs()]
+    
+    if company_name:
+        # Filter blob names that start with the company name followed by '/'
+        blob_list = [blob.name for blob in container_client.list_blobs() if blob.name.startswith(f"{company_name}/")]
+    else:
+        # Fallback: return all files if no company name is provided
+        blob_list = [blob.name for blob in container_client.list_blobs()]
+    
     return {"files": blob_list}
 
 # Define a function to extract keyphrases using RAKE
@@ -988,12 +1074,13 @@ async def upload_files():
 
     # Retrieve the 'organization' field from the form data
     organization = form.get("organization")
+    print("organization:",organization)
 
     processed_files = []
     skipped_files = []
 
     # Normalize the organization name to lowercase and trim spaces
-    organization_folder = organization.strip().lower()
+    organization_folder = organization.strip().lower().strip('.')
 
     for uploaded_file in files:
         print(f"uploaded_file {uploaded_file}")
@@ -1040,7 +1127,9 @@ async def upload_files():
                 # Extract keyphrases using RAKE
                 # keywords = extract_keyphrases(content)
 
-                content_vector = generate_embeddings(content)
+                # content_vector = generate_embeddings(content)
+                # Generate embedding using SentenceTransformer instead of OpenAI's API
+                content_vector = model.encode(content).tolist()
 
                 transformed_doc = {
                     "id": doc_dict.get("id_"),
@@ -1051,7 +1140,7 @@ async def upload_files():
                     "file": file_name,
                     "content": content,
                     "contentVector": content_vector,
-                    # "keywords": keywords,
+                    "keywords": [],
                 }
                 docs_array.append(transformed_doc)
 
@@ -1094,12 +1183,12 @@ async def delete_all():
 
     files_to_delete = []
     if companyClaim:
-        files_to_delete = [blob.name for blob in blob_list if blob.name.startswith(f"{companyClaim.strip().lower()}/")]
+        files_to_delete = [blob.name for blob in blob_list if blob.name.startswith(f"{companyClaim.strip().lower().strip('.')}/")]
     else:
         if organizationFilter == "all":
             files_to_delete = [blob.name for blob in blob_list]
         else:
-            files_to_delete = [blob.name for blob in blob_list if blob.name.startswith(f"{organizationFilter.strip().lower()}/")]
+            files_to_delete = [blob.name for blob in blob_list if blob.name.startswith(f"{organizationFilter.strip().lower().strip('.')}/")]
 
     for file in files_to_delete:
         container_client.delete_blob(file)
@@ -1109,10 +1198,10 @@ async def delete_all():
 
     for doc in results:
         if companyClaim:
-            if doc.get("organization") == companyClaim.strip().lower():
+            if doc.get("organization") == companyClaim.strip().lower().strip('.'):
                 keys_to_delete.append(doc["id"])
         else:
-            if organizationFilter == "all" or doc.get("organization") == organizationFilter.strip().lower():
+            if organizationFilter == "all" or doc.get("organization") == organizationFilter.strip().lower().strip('.'):
                 keys_to_delete.append(doc["id"])
 
     if keys_to_delete:
@@ -1153,7 +1242,6 @@ async def delete_single_file(filename):
 async def table_data():
     # Get the authenticated user details
     authenticated_user = get_authenticated_user_details(request.headers)
-    print(authenticated_user)
     user_id = authenticated_user["user_principal_id"]
 
     if not current_app.cosmos_conversation_client:
@@ -1165,35 +1253,181 @@ async def table_data():
 
     for conv in conversations:
         conversation_id = conv["id"]
+
         # Get messages for each conversation
         conversation_messages = await current_app.cosmos_conversation_client.get_messages(user_id, conversation_id)
-        
+
         # Initialize empty fields
-        system_message = app_settings.azure_openai.system_message
+        system_message = None
         user_prompt = ""
         assistant_answer = ""
-        timestamp = "" 
+        timestamp = ""
+        citations = []  # New field for citations
 
-        for msg in conversation_messages:
+        # Query CosmosDB for the system message from the 'system_messages' collection
+        try:
+            database = cosmos_client.get_database_client(app_settings.chat_history.database)
+            container = database.get_container_client("system_messages")  # Use the correct collection name
+
+            query = f"SELECT * FROM c WHERE c.conversation_id = '{conversation_id}'"
+            results = list(container.query_items(query=query, enable_cross_partition_query=True))
+
+            if results:
+                system_message = results[0].get("system_message", app_settings.azure_openai.system_message)
+            else:
+                system_message = app_settings.azure_openai.system_message  # Fallback to default
+        except Exception as e:
+            logging.error(f"Error retrieving system message for conversation {conversation_id}: {e}")
+            system_message = app_settings.azure_openai.system_message  # Fallback to default if error occurs
+
+        # Iterate over messages to capture the first user prompt and assistant answer.
+        # If the message immediately preceding the assistant message is a tool message,
+        # attempt to parse it for citations.
+        for i, msg in enumerate(conversation_messages):
             role = msg.get("role", "")
             if role == "user" and not user_prompt:
                 user_prompt = msg.get("content", "")
             elif role == "assistant" and not assistant_answer:
                 assistant_answer = msg.get("content", "")
-                timestamp = msg.get("createdAt", "")  # Using the assistant answer timestamp
-            # Stop if both a user prompt and assistant answer have been found
+                timestamp = msg.get("createdAt", "")
+                if i > 0:
+                    previous_msg = conversation_messages[i - 1]
+                    if previous_msg.get("role") == "tool":
+                        try:
+                            tool_msg = json.loads(previous_msg.get("content", "{}"))
+                            citations = tool_msg.get("citations", [])
+                        except Exception as e:
+                            logging.error(f"Error parsing citations for conversation {conversation_id}: {e}")
+            # Stop once both a user prompt and an assistant answer are found.
             if user_prompt and assistant_answer:
                 break
 
-        # Only add rows that have at least a user prompt and an assistant answer.
+        # Only add rows that have both a user prompt and an assistant answer.
         if user_prompt and assistant_answer:
             table_rows.append({
                 "timestamp": timestamp,
                 "system_message": system_message,
                 "user_prompt": user_prompt,
-                "assistant_answer": assistant_answer
+                "assistant_answer": assistant_answer,
+                "citations": citations  # Include citations in the response
             })
 
     return jsonify(table_rows), 200
-    
+
+# Fetch System Message
+@bp.route("/system_message", methods=["GET"])
+async def get_system_message():
+    await cosmos_db_ready.wait()
+    authenticated_user = get_authenticated_user_details(request.headers)
+    user_id = authenticated_user["user_principal_id"]
+
+    try:
+        # Make sure CosmosDB is configured
+        if not current_app.cosmos_conversation_client:
+            raise Exception("CosmosDB is not configured or not working")
+
+        # Get the CosmosDB container
+        container = cosmos_client.get_database_client(app_settings.chat_history.database).get_container_client(USER_SYSTEM_MESSAGE_COLLECTION)
+
+        # Check if the user already has a system message in the collection
+        query = f"SELECT * FROM c WHERE c.user_id = '{user_id}'"
+        results = list(container.query_items(query=query, enable_cross_partition_query=True))
+
+        # If no entry exists, return the default system message from settings
+        if not results:
+            return jsonify({"system_message": app_settings.azure_openai.system_message}), 200
+
+        # If an entry exists, return the stored system message
+        system_message_entry = results[0]
+        return jsonify({"system_message": system_message_entry["system_message"]}), 200
+
+    except Exception as e:
+        logging.exception("Error fetching system message")
+        return jsonify({"error": str(e)}), 500
+
+
+# Update System Message
+@bp.route("/system_message", methods=["POST"])
+async def update_system_message():
+    await cosmos_db_ready.wait()
+    authenticated_user = get_authenticated_user_details(request.headers)
+    user_id = authenticated_user["user_principal_id"]
+
+    request_json = await request.get_json()
+    new_system_message = request_json.get("system_message")
+
+    if not new_system_message:
+        return jsonify({"error": "system_message is required"}), 400
+
+    try:
+        # Make sure CosmosDB is configured
+        if not current_app.cosmos_conversation_client:
+            raise Exception("CosmosDB is not configured or not working")
+
+        # Get the CosmosDB container
+        database = cosmos_client.get_database_client(app_settings.chat_history.database)
+        container = database.get_container_client(USER_SYSTEM_MESSAGE_COLLECTION)
+
+        # Check if the collection exists, if not create it
+        existing_collections = [coll['id'] for coll in database.list_containers()]
+        if USER_SYSTEM_MESSAGE_COLLECTION not in existing_collections:
+            container = database.create_container(id=USER_SYSTEM_MESSAGE_COLLECTION, partition_key=PartitionKey(path='/user_id'))
+            print(f"Created collection '{USER_SYSTEM_MESSAGE_COLLECTION}'.")
+
+        # Query for the system message
+        query = f"SELECT * FROM c WHERE c.user_id = '{user_id}'"
+        results = list(container.query_items(query=query, enable_cross_partition_query=True))
+
+        if results:
+            # Update the system message for the existing entry
+            system_message_entry = results[0]
+            system_message_entry["system_message"] = new_system_message
+            container.upsert_item(system_message_entry)
+        else:
+            # Insert a new system message for the user, ensuring to include the 'id'
+            container.create_item({
+                "id": str(uuid.uuid4()),  # Generate a unique id for the system message
+                "user_id": user_id,
+                "system_message": new_system_message
+            })
+
+        return jsonify({"message": "System message updated successfully"}), 200
+
+    except Exception as e:
+        logging.exception("Error updating system message")
+        return jsonify({"error": str(e)}), 500
+
+@bp.route("/embed", methods=["POST"])
+async def embed_text():
+    try:
+        request_json = await request.get_json()
+        text = request_json.get("input", "")
+        if not text:
+            return jsonify({"error": "Error: 'input' field is empty."}), 400
+
+        logging.info("Quart endpoint for text embedding has been called.")
+
+        try:
+            embedding = model.encode(text)
+        except Exception as e:
+            logging.exception("Error generating embedding")
+            return jsonify({"error": f"Error generating embedding: {str(e)}"}), 500
+
+        # Convert embedding to a list if necessary for JSON serialization
+        embedding_list = embedding.tolist() if hasattr(embedding, "tolist") else embedding
+
+        response_data = {
+            "data": [
+                {
+                    "embedding": embedding_list
+                }
+            ]
+        }
+        return jsonify(response_data), 200
+
+    except Exception as e:
+        logging.exception("Exception in /embed endpoint")
+        return jsonify({"error": str(e)}), 500
+
+
 app = create_app()

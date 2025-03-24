@@ -1,0 +1,57 @@
+{
+    "messages": [
+      {
+        "role": "user",
+        "content": "wordpress"
+      }
+    ],
+    "temperature": 0.1,
+    "max_tokens": 4096,
+    "top_p": 0.95,
+    "stop": null,
+    "stream": true,
+    "model": "gpt-4o",
+    "user": "{\"EndUserId\": \"00000000-0000-0000-0000-000000000000\", \"EndUserIdType\": \"EntraId\", \"SourceIp\": \"127.0.0.1\", \"SourceRequestHeaders\": {\"User-Agent\": \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36\"}, \"ConversationId\": null, \"ApplicationName\": \"Chatbot\"}",
+    "extra_body": {
+      "data_sources": [
+        {
+          "type": "azure_search",
+          "parameters": {
+            "top_n_documents": 20,
+            "strictness": 3,
+            "in_scope": true,
+            "index_name": "sentence-transformer-index",
+            "semantic_configuration": "semantic-config",
+            "query_type": "vector_semantic_hybrid",
+            "endpoint": "https://legal-chatbot-search.search.windows.net",
+            "authentication": {
+              "type": "api_key",
+              "key": ""
+            },
+            "embedding_dependency": {
+              "type": "deployment_name",
+              "deployment_name": "text-embedding-ada-002"
+            },
+            "fields_mapping": {
+              "content_fields": [
+                "content"
+              ],
+              "title_field": "title",
+              "url_field": "url",
+              "filepath_field": "file",
+              "vector_fields": [
+                "contentVector"
+              ]
+            },
+            "allow_partial_result": false,
+            "include_contexts": [
+              "citations",
+              "intent"
+            ],
+            "role_information": "you are an ai assistant tasked to answer questions based on the pdf documents."
+          }
+        }
+      ]
+    }
+  }
+  

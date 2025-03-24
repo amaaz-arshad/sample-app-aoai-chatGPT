@@ -5,7 +5,7 @@ import 'react-toastify/dist/ReactToastify.css'
 import { AppStateContext } from '../../state/AppProvider' // Add this import
 import Navbar from '../../components/Navbar/Navbar'
 import { getUserInfo, UserInfo } from '../../api'
-import { USER_ATTRIBUTE } from '../../constants/variables'
+import { FILTER_FIELD } from '../../constants/variables'
 import './FileUpload.css'
 
 interface FileUploadResponse {
@@ -43,21 +43,23 @@ const FileUpload: React.FC = () => {
   }
 
   const getCompanyName = () => {
+    // console.log("FILTER_FIELD:",FILTER_FIELD)
     if (userDetails && userDetails?.[0]?.user_claims) {
-      const companyClaim = userDetails[0].user_claims.find(
-        claim => claim.typ === USER_ATTRIBUTE
-      )
-      return companyClaim ? companyClaim.val.trim().toLowerCase() : ''
+      const companyClaim = userDetails[0].user_claims.find(claim => claim.typ === FILTER_FIELD)
+      return companyClaim ? companyClaim.val.trim().toLowerCase().replace(/^\.+|\.+$/g, '') : ''
     }
     return ''
   }
 
   const fetchFiles = async () => {
     try {
-      const response = await axios.get<FileUploadResponse>(`/pipeline/list`)
-      setFiles(response.data.files)
+      const companyName = getCompanyName();
+      // Use encodeURIComponent to properly encode the company name in the URL
+      const response = await axios.get<FileUploadResponse>(`/pipeline/list?company=${encodeURIComponent(companyName)}`);
+      console.log('files:', response.data);
+      setFiles(response.data.files);
     } catch (error) {
-      toast.error('Failed to fetch files')
+      toast.error('Failed to fetch files');
     }
   }
 
@@ -86,7 +88,7 @@ const FileUpload: React.FC = () => {
         toast.error('Organization name is required to upload files.')
         return
       }
-      companyName = inputOrganization.trim().toLowerCase()
+      companyName = inputOrganization.trim().toLowerCase().replace(/^\.+|\.+$/g, '')
     }
 
     setUploading(true)
@@ -137,7 +139,7 @@ const FileUpload: React.FC = () => {
       const formData = new FormData()
       formData.append('organizationFilter', organizationFilter)
       if (companyName) {
-        formData.append("companyClaim", companyName);
+        formData.append('companyClaim', companyName)
       }
 
       const deletePromise = axios.delete(`/pipeline/delete_all`, {

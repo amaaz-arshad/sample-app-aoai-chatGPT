@@ -1,0 +1,87 @@
+@bp.route("/history_data", methods=["GET"])
+async def table_data():
+    # Get the authenticated user details
+    authenticated_user = get_authenticated_user_details(request.headers)
+    # user_id = authenticated_user["user_principal_id"]
+    user_id = "e3dcffb3-19c3-41ca-8882-6aef9121108a"
+
+    # Get the Cosmos DB database and container for conversation and messages
+    database = cosmos_client.get_database_client(app_settings.chat_history.database)
+    container = database.get_container_client(app_settings.chat_history.conversations_container)
+
+    # Query for conversations for this user
+    conversation_query = (
+        f"SELECT * FROM c WHERE c.userId = '{user_id}' AND c.type='conversation' order by c.updatedAt DESC"
+    )
+    conversations = list(
+        container.query_items(query=conversation_query, enable_cross_partition_query=True)
+    )
+
+    table_rows = []
+    for conv in conversations:
+        conversation_id = conv["id"]
+
+        # Query for messages in this conversation (of type "message")
+        messages_query = (
+            f"SELECT * FROM c WHERE c.conversationId = '{conversation_id}' "
+            f"AND c.type='message' AND c.userId = '{user_id}'"
+        )
+        conversation_messages = list(
+            container.query_items(query=messages_query, enable_cross_partition_query=True)
+        )
+
+        # Query CosmosDB for the system message from the 'system_messages' collection
+        try:
+            sys_container = database.get_container_client("system_messages")
+            sys_query = f"SELECT * FROM c WHERE c.conversation_id = '{conversation_id}'"
+            sys_results = list(
+                sys_container.query_items(query=sys_query, enable_cross_partition_query=True)
+            )
+            if sys_results:
+                system_message = sys_results[0].get(
+                    "system_message", app_settings.azure_openai.system_message
+                )
+            else:
+                system_message = app_settings.azure_openai.system_message  # Fallback to default
+        except Exception as e:
+            logging.error(f"Error retrieving system message for conversation {conversation_id}: {e}")
+            system_message = app_settings.azure_openai.system_message  # Fallback to default if error occurs
+
+        # Initialize fields for the table row
+        user_prompt = ""
+        assistant_answer = ""
+        timestamp = ""
+        citations = []
+
+        # Extract the first user prompt and the first assistant answer
+        for i, msg in enumerate(conversation_messages):
+            role = msg.get("role", "")
+            if role == "user" and not user_prompt:
+                user_prompt = msg.get("content", "")
+            elif role == "assistant" and not assistant_answer:
+                assistant_answer = msg.get("content", "")
+                timestamp = msg.get("createdAt", "")
+                # If the preceding message is a tool message, try to parse citations from it
+                if i > 0:
+                    previous_msg = conversation_messages[i - 1]
+                    if previous_msg.get("role") == "tool":
+                        try:
+                            tool_msg = json.loads(previous_msg.get("content", "{}"))
+                            citations = tool_msg.get("citations", [])
+                        except Exception as e:
+                            logging.error(f"Error parsing citations for conversation {conversation_id}: {e}")
+            # Stop once both prompt and answer are found
+            if user_prompt and assistant_answer:
+                break
+
+        # Only add rows that have both a user prompt and an assistant answer
+        if user_prompt and assistant_answer:
+            table_rows.append({
+                "timestamp": timestamp,
+                "system_message": system_message,
+                "user_prompt": user_prompt,
+                "assistant_answer": assistant_answer,
+                "citations": citations
+            })
+
+    return jsonify(table_rows), 200

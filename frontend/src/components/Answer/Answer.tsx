@@ -36,6 +36,7 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, sendFo
   const filePathTruncationLimit = 50
 
   const parsedAnswer = useMemo(() => parseAnswer(answer), [answer])
+  // console.log("answer:", answer)
   const answerOnly = parsedAnswer?.markdownFormatText?.includes('Anschlussfragen:')
     ? parsedAnswer.markdownFormatText.split('Anschlussfragen:')[0]
     : parsedAnswer?.markdownFormatText

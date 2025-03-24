@@ -39,7 +39,7 @@ import { QuestionInput } from '../../components/QuestionInput'
 import { ChatHistoryPanel } from '../../components/ChatHistory/ChatHistoryPanel'
 import { AppStateContext } from '../../state/AppProvider'
 import { useBoolean } from '@fluentui/react-hooks'
-import { USER_ATTRIBUTE } from '../../constants/variables'
+import { FILTER_FIELD } from '../../constants/variables'
 
 const enum messageStatus {
   NotRunning = 'Not Running',
@@ -344,7 +344,7 @@ const Chat = () => {
       Array.isArray(userDetails) &&
       userDetails.length > 0 &&
       Array.isArray(userDetails[0].user_claims) 
-        ? userDetails[0].user_claims.find(claim => claim.typ === USER_ATTRIBUTE) 
+        ? userDetails[0].user_claims.find(claim => claim.typ === FILTER_FIELD) 
         : null;
     const companyName = companyClaim && companyClaim.val ? companyClaim.val : null;
     console.log(userDetails)

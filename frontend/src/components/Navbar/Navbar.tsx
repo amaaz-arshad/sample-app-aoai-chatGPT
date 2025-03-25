@@ -1,31 +1,19 @@
 import React, { useContext, useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import SnapLogo from '../../assets/Snap.svg';
-import { AppStateContext } from '../../state/AppProvider';
-import { getUserInfo, UserInfo } from '../../api';
-import { FILTER_FIELD } from '../../constants/variables';
 import "./Navbar.css";
+import { useAppUser } from '../../state/AppUserProvider';
 
 export default function Navbar() {
-  const appStateContext = useContext(AppStateContext);
-  const AUTH_ENABLED = appStateContext?.state.frontendSettings?.auth_enabled;
-  const [userDetails, setUserDetails] = useState<UserInfo[]>([]);
+  const { userInfo, authEnabled } = useAppUser();
+  const [companyName, setCompanyName] = useState<string>('');
 
   useEffect(() => {
-    if (AUTH_ENABLED !== undefined) {
-      getUserInfo().then(info => setUserDetails(info));
+    if (userInfo && userInfo.length > 0) {
+      const companyClaim = userInfo[0].user_claims.find(claim => claim.typ === 'streetAddress');
+      setCompanyName(companyClaim ? companyClaim.val.trim().toLowerCase() : '');
     }
-  }, [AUTH_ENABLED]);
-
-  const getCompanyName = () => {
-    if (userDetails && userDetails[0]?.user_claims) {
-      const companyClaim = userDetails[0].user_claims.find(claim => claim.typ === "streetAddress");
-      return companyClaim ? companyClaim.val.trim().toLowerCase() : '';
-    }
-    return '';
-  };
-
-  const companyName = getCompanyName();
+  }, [userInfo]);
 
   return (
     <nav className="navbar navbar-expand-lg bg-body-tertiary bg-dark sticky-top" data-bs-theme="dark">

@@ -207,7 +207,7 @@
   padding: 5px 16px;
   gap: 4px;
   position: absolute;
-  width: 161px;
+  width: 231px;
   height: 32px;
   left: calc(50% - 161px / 2 + 25.8px);
   bottom: 116px;
@@ -222,7 +222,7 @@
 }
 
 .stopGeneratingText {
-  width: 103px;
+  width: 173px;
   height: 20px;
   font-style: normal;
   font-weight: 600;
@@ -290,6 +290,7 @@
   color: #323130;
   margin-top: 12px;
   margin-bottom: 12px;
+  text-decoration: underline;
 }
 
 .citationPanelTitle:hover {

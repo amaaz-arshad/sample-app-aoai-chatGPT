@@ -64,9 +64,9 @@ export const ChatHistoryListItemCell: React.FC<ChatHistoryListItemCellProps> = (
   const isSelected = item?.id === appStateContext?.state.currentChat?.id
   const dialogContentProps = {
     type: DialogType.close,
-    title: 'Are you sure you want to delete this item?',
+    title: 'Möchten Sie diesen Artikel wirklich löschen?',
     closeButtonAriaLabel: 'Close',
-    subText: 'The history of this chat session will permanently removed.'
+    subText: 'Der Verlauf dieser Chatsitzung wird dauerhaft gelöscht.'
   }
 
   const modalProps = {
@@ -226,7 +226,7 @@ export const ChatHistoryListItemCell: React.FC<ChatHistoryListItemCellProps> = (
                         onKeyDown={e => (e.key === ' ' || e.key === 'Enter' ? cancelEditTitle() : null)}
                         onClick={() => cancelEditTitle()}
                         aria-label="cancel edit title"
-                        iconProps={{ iconName: 'Cancel' }}
+                        iconProps={{ iconName: 'cancel' }}
                         styles={{ root: { color: 'red', marginLeft: '5px' } }}
                       />
                     </Stack>
@@ -252,15 +252,15 @@ export const ChatHistoryListItemCell: React.FC<ChatHistoryListItemCellProps> = (
               <Stack horizontal horizontalAlign="end">
                 <IconButton
                   className={styles.itemButton}
-                  iconProps={{ iconName: 'Delete' }}
-                  title="Delete"
+                  iconProps={{ iconName: 'delete' }}
+                  title="Löschen"
                   onClick={toggleDeleteDialog}
                   onKeyDown={e => (e.key === ' ' ? toggleDeleteDialog() : null)}
                 />
                 <IconButton
                   className={styles.itemButton}
-                  iconProps={{ iconName: 'Edit' }}
-                  title="Edit"
+                  iconProps={{ iconName: 'edit' }}
+                  title="Bearbeiten"
                   onClick={onEdit}
                   onKeyDown={e => (e.key === ' ' ? onEdit() : null)}
                 />
@@ -283,8 +283,8 @@ export const ChatHistoryListItemCell: React.FC<ChatHistoryListItemCellProps> = (
         dialogContentProps={dialogContentProps}
         modalProps={modalProps}>
         <DialogFooter>
-          <PrimaryButton onClick={onDelete} text="Delete" />
-          <DefaultButton onClick={toggleDeleteDialog} text="Cancel" />
+          <PrimaryButton onClick={onDelete} text="Löschen" />
+          <DefaultButton onClick={toggleDeleteDialog} text="Stornieren" />
         </DialogFooter>
       </Dialog>
     </Stack>

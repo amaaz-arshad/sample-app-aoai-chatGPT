@@ -1,19 +1,20 @@
-import React, { useContext, useEffect, useState } from 'react';
-import { NavLink } from 'react-router-dom';
-import SnapLogo from '../../assets/Snap.svg';
-import "./Navbar.css";
-import { useAppUser } from '../../state/AppUserProvider';
+import React, { useContext, useEffect, useState } from 'react'
+import { NavLink } from 'react-router-dom'
+import SnapLogo from '../../assets/Snap.svg'
+import './Navbar.css'
+import { useAppUser } from '../../state/AppUserProvider'
 
 export default function Navbar() {
-  const { userInfo, authEnabled } = useAppUser();
-  const [companyName, setCompanyName] = useState<string>('');
+  const { userInfo, authEnabled } = useAppUser()
+  const [companyName, setCompanyName] = useState<string>('')
 
   useEffect(() => {
     if (userInfo && userInfo.length > 0) {
-      const companyClaim = userInfo[0].user_claims.find(claim => claim.typ === 'streetAddress');
-      setCompanyName(companyClaim ? companyClaim.val.trim().toLowerCase() : '');
+      const companyClaim = userInfo[0].user_claims.find(claim => claim.typ === 'streetAddress')
+      console.log('streetaddress value in navbar:', companyClaim)
+      setCompanyName(companyClaim ? companyClaim.val.trim().toLowerCase() : '')
     }
-  }, [userInfo]);
+  }, [userInfo])
 
   return (
     <nav className="navbar navbar-expand-lg bg-body-tertiary bg-dark sticky-top" data-bs-theme="dark">
@@ -34,46 +35,36 @@ export default function Navbar() {
         <div className="collapse navbar-collapse" id="navbarNavAltMarkup">
           <div className="navbar-nav ms-auto">
             <NavLink
-              className={({ isActive }) =>
-                isActive ? 'nav-link active fw-bold me-2' : 'nav-link fw-bold me-2'
-              }
+              className={({ isActive }) => (isActive ? 'nav-link active fw-bold me-2' : 'nav-link fw-bold me-2')}
               to="/">
               CHATBOT
             </NavLink>
             <NavLink
-              className={({ isActive }) =>
-                isActive ? 'nav-link active fw-bold me-2' : 'nav-link fw-bold me-2'
-              }
+              className={({ isActive }) => (isActive ? 'nav-link active fw-bold me-2' : 'nav-link fw-bold me-2')}
               to="/upload-files">
               UPLOAD FILES
             </NavLink>
-            {companyName !== 'user' && (
+            {(!companyName || companyName != 'user') && (
               <>
                 <NavLink
-                  className={({ isActive }) =>
-                    isActive ? 'nav-link active fw-bold me-2' : 'nav-link fw-bold me-2'
-                  }
+                  className={({ isActive }) => (isActive ? 'nav-link active fw-bold me-2' : 'nav-link fw-bold me-2')}
                   to="/history">
                   HISTORY
                 </NavLink>
                 <NavLink
-                  className={({ isActive }) =>
-                    isActive ? 'nav-link active fw-bold me-2' : 'nav-link fw-bold me-2'
-                  }
+                  className={({ isActive }) => (isActive ? 'nav-link active fw-bold me-2' : 'nav-link fw-bold me-2')}
                   to="/system-message">
                   SYSTEM MESSAGE
                 </NavLink>
               </>
             )}
             {/* Logout button */}
-            <button
-              className="nav-link fw-bold"
-              onClick={() => (window.location.href = '/.auth/logout')}>
+            <button className="nav-link fw-bold" onClick={() => (window.location.href = '/.auth/logout')}>
               LOGOUT
             </button>
           </div>
         </div>
       </div>
     </nav>
-  );
+  )
 }

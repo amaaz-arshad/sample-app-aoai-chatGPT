@@ -1,0 +1,41 @@
+@bp.route("/get-pdf", methods=["GET"])
+async def get_pdf():
+    # Get the file name from query parameters (e.g. "filename.pdf")
+    file_name = request.args.get("file_name")
+    
+    if not file_name:
+        return jsonify({"error": "file_name parameter is required"}), 400
+
+    try:
+        # Access the blob container
+        container_client = blob_service_client.get_container_client(container_name)
+        
+        # Search for a blob whose base name matches the provided file_name
+        found_blob_name = None
+        for blob in container_client.list_blobs():
+            # The blob.name includes the folder path, so we extract the base file name
+            if blob.name.split('/')[-1] == file_name:
+                found_blob_name = blob.name
+                break
+        
+        if not found_blob_name:
+            return jsonify({"error": "File not found"}), 404
+        
+        # Get the blob client using the full blob name (including folder path)
+        blob_client = container_client.get_blob_client(found_blob_name)
+
+        # Optional: Check if the blob exists
+        if not blob_client.exists():
+            return jsonify({"error": "File not found"}), 404
+        
+        # Download the blob data
+        download_stream = blob_client.download_blob()
+        
+        # Return the PDF with the inline disposition so it opens in the browser
+        return Response(
+            download_stream.readall(),
+            mimetype="application/pdf",
+            headers={"Content-Disposition": f"inline; filename={file_name}"}
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500

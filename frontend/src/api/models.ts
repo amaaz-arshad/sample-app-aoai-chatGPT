@@ -6,6 +6,7 @@ export type AskResponse = {
   message_id?: string
   feedback?: Feedback
   exec_results?: ExecResults[]
+  organization?: string
 }
 
 export type Citation = {

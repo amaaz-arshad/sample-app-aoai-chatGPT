@@ -68,6 +68,7 @@ const Chat = () => {
   const [logo, setLogo] = useState('')
   const [answerId, setAnswerId] = useState<string>('')
   const [userDetails, setUserDetails] = useState<UserInfo[]>([])
+  const [organization, setOrganization] = useState('')
 
   const errorDialogContentProps = {
     type: DialogType.close,
@@ -125,7 +126,21 @@ const Chat = () => {
       return
     }
     const userInfoList = await getUserInfo()
+    const organizationName =
+      Array.isArray(userInfoList) && userInfoList.length > 0 && Array.isArray(userInfoList[0].user_claims)
+        ? userInfoList[0].user_claims.find(claim => claim.typ === FILTER_FIELD)
+        : null
+    const organizationVal =
+      organizationName && organizationName.val
+        ? organizationName.val
+            .trim()
+            .toLowerCase()
+            .replace(/^\.+|\.+$/g, '')
+        : null
+    console.log(userInfoList)
+    console.log('companyname:', organizationVal)
     setUserDetails(userInfoList)
+    setOrganization(organizationVal)
     if (userInfoList.length === 0 && window.location.hostname !== '127.0.0.1') {
       setShowAuthMessage(true)
     } else {
@@ -340,15 +355,13 @@ const Chat = () => {
       date: new Date().toISOString()
     }
 
-    const companyClaim = 
-      Array.isArray(userDetails) &&
-      userDetails.length > 0 &&
-      Array.isArray(userDetails[0].user_claims) 
-        ? userDetails[0].user_claims.find(claim => claim.typ === FILTER_FIELD) 
-        : null;
-    const companyName = companyClaim && companyClaim.val ? companyClaim.val : null;
-    console.log(userDetails)
-    console.log("companyname:", companyName)
+    // const companyClaim =
+    //   Array.isArray(userDetails) && userDetails.length > 0 && Array.isArray(userDetails[0].user_claims)
+    //     ? userDetails[0].user_claims.find(claim => claim.typ === FILTER_FIELD)
+    //     : null
+    // const companyName = companyClaim && companyClaim.val ? companyClaim.val : null
+    // console.log(userDetails)
+    // console.log('companyname:', companyName)
     let request: ConversationRequest
     let conversation
     if (conversationId) {
@@ -361,15 +374,17 @@ const Chat = () => {
         return
       } else {
         conversation.messages.push(userMessage)
+        console.log("organization in request 1:",organization)
         request = {
           messages: [...conversation.messages.filter(answer => answer.role !== ERROR)],
-          companyName
+          companyName: organization
         }
       }
     } else {
+      console.log("organization in request 2:",organization)
       request = {
         messages: [userMessage].filter(answer => answer.role !== ERROR),
-        companyName
+        companyName: organization
       }
       setMessages(request.messages)
     }
@@ -857,7 +872,8 @@ const Chat = () => {
                               generated_chart: parsePlotFromMessage(messages[index - 1]),
                               message_id: answer.id,
                               feedback: answer.feedback,
-                              exec_results: execResults
+                              exec_results: execResults,
+                              organization: organization
                             }}
                             onCitationClicked={c => onShowCitation(c)}
                             onExectResultClicked={() => onShowExecResult(answerId)}
@@ -892,7 +908,8 @@ const Chat = () => {
                         answer={{
                           answer: 'Antwort wird generiert...',
                           citations: [],
-                          generated_chart: null
+                          generated_chart: null,
+                          organization: organization
                         }}
                         onCitationClicked={() => null}
                         onExectResultClicked={() => null}
@@ -917,7 +934,7 @@ const Chat = () => {
                   onKeyDown={e => (e.key === 'Enter' || e.key === ' ' ? stopGenerating() : null)}>
                   <SquareRegular className={styles.stopGeneratingIcon} aria-hidden="true" />
                   <span className={styles.stopGeneratingText} aria-hidden="true">
-                  Beantwortung abbrechen
+                    Beantwortung abbrechen
                   </span>
                 </Stack>
               )}

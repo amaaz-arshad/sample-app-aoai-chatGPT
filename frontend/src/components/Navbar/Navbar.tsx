@@ -3,6 +3,7 @@ import { NavLink } from 'react-router-dom'
 import SnapLogo from '../../assets/Snap.svg'
 import './Navbar.css'
 import { useAppUser } from '../../state/AppUserProvider'
+import { FILTER_FIELD2 } from '../../constants/variables'
 
 export default function Navbar() {
   const { userInfo, authEnabled } = useAppUser()
@@ -10,7 +11,7 @@ export default function Navbar() {
 
   useEffect(() => {
     if (userInfo && userInfo.length > 0) {
-      const companyClaim = userInfo[0].user_claims.find(claim => claim.typ === 'streetAddress')
+      const companyClaim = userInfo[0].user_claims.find(claim => claim.typ === FILTER_FIELD2)
       console.log('streetaddress value in navbar:', companyClaim)
       setCompanyName(companyClaim ? companyClaim.val.trim().toLowerCase() : '')
     }

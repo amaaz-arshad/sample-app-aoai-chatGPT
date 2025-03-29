@@ -43,7 +43,7 @@ const FileUpload: React.FC = () => {
   }
 
   const getCompanyName = () => {
-    // console.log("FILTER_FIELD:",FILTER_FIELD)
+    console.log("FILTER_FIELD:",FILTER_FIELD)
     if (userDetails && userDetails?.[0]?.user_claims) {
       const companyClaim = userDetails[0].user_claims.find(claim => claim.typ === FILTER_FIELD)
       return companyClaim ? companyClaim.val.trim().toLowerCase().replace(/^\.+|\.+$/g, '') : ''
@@ -119,13 +119,13 @@ const FileUpload: React.FC = () => {
 
     try {
       await uploadPromise
-      await fetchFiles()
       setNewFiles(null)
     } catch (error) {
     } finally {
       setUploading(false)
       const fileInput = document.getElementById('file-input') as HTMLInputElement
       if (fileInput) fileInput.value = ''
+      await fetchFiles() // Always refresh the file list after the upload attempt (success or failure)
     }
   }
 

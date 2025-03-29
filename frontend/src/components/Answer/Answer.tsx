@@ -81,16 +81,38 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, sendFo
       const part_i = citation.part_index ?? (citation.chunk_id ? parseInt(citation.chunk_id) + 1 : '')
       if (truncate && citation.filepath.length > filePathTruncationLimit) {
         const citationLength = citation.filepath.length
-        citationFilename = `${citation.filepath.substring(0, 20)}...${citation.filepath.substring(citationLength - 20)} - Part ${part_i}`
+        // citationFilename = `${citation.filepath.substring(0, 20)}...${citation.filepath.substring(citationLength - 20)} - Part ${part_i}`
+        citationFilename = `${citation.filepath.substring(0, 20)}...${citation.filepath.substring(citationLength - 20)} - ${citation.title}`
       } else {
-        citationFilename = `${citation.filepath} - Part ${part_i}`
+        // citationFilename = `${citation.filepath} - Part ${part_i}`
+        citationFilename = `${citation.filepath} - ${citation.title}`
       }
     } else if (citation.filepath && citation.reindex_id) {
-      citationFilename = `${citation.filepath} - Part ${citation.reindex_id}`
+      // citationFilename = `${citation.filepath} - Part ${citation.reindex_id}`
+      citationFilename = `${citation.filepath} - ${citation.title}`
     } else {
       citationFilename = `Citation ${index}`
     }
     return citationFilename
+  }
+
+  const onCitationClicked2 = (citation: Citation) => {
+    if (!citation.filepath) {
+      console.error('File path is missing')
+      return
+    }
+
+    // Extract the page number from the citation title (e.g., "Page 47")
+    const pageNumberMatch = citation.title?.match(/Page (\d+)/)
+    if (!pageNumberMatch) {
+      console.error('Page number not found in citation title')
+      return
+    }
+    const pageNumber = parseInt(pageNumberMatch[1], 10) // Extracted page number
+
+    // Construct the URL with the page fragment
+    const pdfUrl = `/get-pdf?file_name=${answer.organization ? answer.organization + '/' : ''}${encodeURIComponent(citation.filepath)}#page=${pageNumber}`
+    window.open(pdfUrl, '_blank')
   }
 
   // const createCitationFilepath = (citation: Citation, index: number, truncate: boolean = false) => {
@@ -421,8 +443,8 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, sendFo
                   tabIndex={0}
                   role="link"
                   key={idx}
-                  onClick={() => onCitationClicked(citation)}
-                  onKeyDown={e => (e.key === 'Enter' || e.key === ' ' ? onCitationClicked(citation) : null)}
+                  onClick={() => onCitationClicked2(citation)}
+                  onKeyDown={e => (e.key === 'Enter' || e.key === ' ' ? onCitationClicked2(citation) : null)}
                   className={styles.citationContainer}
                   aria-label={createCitationFilepath(citation, idx)}>
                   <div className={styles.citation}>{idx}</div>

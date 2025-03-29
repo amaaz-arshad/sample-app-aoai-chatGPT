@@ -5,7 +5,6 @@ import logging
 import uuid
 import httpx
 import asyncio
-import requests
 # from azure.ai.documentintelligence import DocumentIntelligenceClient
 from azure.core.credentials import AzureKeyCredential
 from azure.search.documents import SearchClient
@@ -19,6 +18,7 @@ from quart import (
     send_from_directory,
     render_template,
     current_app,
+    Response
 )
 
 from openai import AsyncAzureOpenAI
@@ -58,7 +58,7 @@ load_dotenv()
 model = SentenceTransformer("sentence-transformers/multi-qa-mpnet-base-dot-v1")
 cosmos_account_uri = f"https://{app_settings.chat_history.account}.documents.azure.com:443/"
 
-cosmos_client = CosmosClient(cosmos_account_uri, credential=os.getenv("A_AZURE_COSMOS_ACCOUNT_KEY"))
+cosmos_client = CosmosClient(cosmos_account_uri, credential=os.getenv("REACT_APP_AZURE_COSMOS_ACCOUNT_KEY"))
 collection_name = 'system_messages'
 # Define Cosmos DB collection name for storing user system messages
 USER_SYSTEM_MESSAGE_COLLECTION = "user_system_message"
@@ -80,10 +80,10 @@ print(f"index_name:",index_name)
 api_key = os.getenv("AZURE_SEARCH_KEY")
 
 # Azure Blob Storage endpoint and container
-blob_service_url = os.getenv("A_AZURE_BLOB_URL")
+blob_service_url = os.getenv("REACT_APP_AZURE_BLOB_URL")
 # container_name = "pdf-container2"
-container_name = os.getenv("A_AZURE_BLOB_CONTAINER_NAME")
-storage_key = os.getenv("A_AZURE_BLOB_STORAGE_KEY")
+container_name = os.getenv("REACT_APP_AZURE_BLOB_CONTAINER_NAME")
+storage_key = os.getenv("REACT_APP_AZURE_BLOB_STORAGE_KEY")
 blob_service_client = BlobServiceClient(account_url=blob_service_url, credential=storage_key)
 
 # Create a SearchClient instance
@@ -91,8 +91,8 @@ search_client = SearchClient(service_endpoint, index_name, AzureKeyCredential(ap
 
 # Initialize the Document Intelligence Client
 # document_intelligence_client = DocumentIntelligenceClient(
-#     endpoint=os.getenv("A_AZURE_DOC_INTELLIGENCE_ENDPOINT"), 
-#     credential=AzureKeyCredential(os.getenv("A_AZURE_DOC_INTELLIGENCE_KEY"))
+#     endpoint=os.getenv("REACT_APP_AZURE_DOC_INTELLIGENCE_ENDPOINT"), 
+#     credential=AzureKeyCredential(os.getenv("REACT_APP_AZURE_DOC_INTELLIGENCE_KEY"))
 # )
 
 bp = Blueprint("routes", __name__, static_folder="static", template_folder="static")
@@ -350,14 +350,15 @@ async def prepare_model_args(request_body, request_headers):
         
         # Get the companyName from the request body
         companyName = request_body.get("companyName")
-
+        print("companyName:", companyName)
+        
         # Apply the filter only if companyName has a value
         if companyName:
             # Convert companyName to lowercase
             companyName = companyName.strip().lower().strip('.')
             data_source_config["parameters"]["filter"] = f"organization eq '{companyName}'"
 
-        print("endpoint url: " + request.url_root.rstrip("/") + "/embed")
+        # print("endpoint url: " + request.url_root.rstrip("/") + "/embed")
         data_source_config["parameters"]["embedding_dependency"] = {
             "type": "endpoint",
             "endpoint": app_settings.azure_openai.embedding_endpoint, 
@@ -410,7 +411,7 @@ async def prepare_model_args(request_body, request_headers):
 
     logging.debug(f"REQUEST BODY: {json.dumps(model_args_clean, indent=4)}")
 
-    print(f"model_args: {model_args}")
+    # print(f"model_args: {model_args}")
     return model_args
 
 
@@ -1121,7 +1122,7 @@ async def upload_files():
                 metadata = doc_dict.get("metadata", {})
                 page = metadata.get("page")
                 total_pages = metadata.get("total_pages")
-                title_with_pages = f"Page {page} of {total_pages}"
+                title_with_pages = f"Page {page}"
                 content = doc_dict.get("text", "")
 
                 # Extract keyphrases using RAKE
@@ -1427,6 +1428,48 @@ async def embed_text():
 
     except Exception as e:
         logging.exception("Exception in /embed endpoint")
+        return jsonify({"error": str(e)}), 500
+
+@bp.route("/get-pdf", methods=["GET"])
+async def get_pdf():
+    # Get the file name from query parameters
+    file_name = request.args.get("file_name")
+    
+    if not file_name:
+        return jsonify({"error": "file_name parameter is required"}), 400
+
+    try:
+        # Access the blob container
+        container_client = blob_service_client.get_container_client(container_name)
+        blob_client = None
+
+        if '/' in file_name:
+            # If '/' is in file_name, treat it as a full path
+            blob_client = container_client.get_blob_client(file_name)
+            # Check if the blob exists
+            if not blob_client.exists():
+                return jsonify({"error": "File not found"}), 404
+        else:
+            # If no '/' in file_name, search for the file by name
+            for blob in container_client.list_blobs():
+                # Extract the file name from the blob's name
+                blob_base_name = blob.name.split('/')[-1]
+                if blob_base_name == file_name:
+                    blob_client = container_client.get_blob_client(blob.name)
+                    break
+            if not blob_client:
+                return jsonify({"error": "File not found"}), 404
+        
+        # Download the blob data
+        download_stream = blob_client.download_blob()
+        
+        # Return the PDF with the inline disposition so it opens in the browser
+        return Response(
+            download_stream.readall(),
+            mimetype="application/pdf",
+            headers={"Content-Disposition": f"inline; filename={file_name}"}
+        )
+    except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 

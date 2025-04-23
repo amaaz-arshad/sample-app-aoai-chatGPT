@@ -38,30 +38,30 @@ export default function Navbar() {
             <NavLink
               className={({ isActive }) => (isActive ? 'nav-link active fw-bold me-2' : 'nav-link fw-bold me-2')}
               to="/">
-              CHATBOT
+              Chatbot
             </NavLink>
             <NavLink
               className={({ isActive }) => (isActive ? 'nav-link active fw-bold me-2' : 'nav-link fw-bold me-2')}
               to="/upload-files">
-              UPLOAD FILES
+              Dateien hochladen
             </NavLink>
             {(!companyName || companyName != 'user') && (
               <>
                 <NavLink
                   className={({ isActive }) => (isActive ? 'nav-link active fw-bold me-2' : 'nav-link fw-bold me-2')}
                   to="/history">
-                  HISTORY
+                  Verlauf
                 </NavLink>
                 <NavLink
                   className={({ isActive }) => (isActive ? 'nav-link active fw-bold me-2' : 'nav-link fw-bold me-2')}
                   to="/system-message">
-                  SYSTEM MESSAGE
+                  Systemnachricht
                 </NavLink>
               </>
             )}
             {/* Logout button */}
             <button className="nav-link fw-bold" onClick={() => (window.location.href = '/.auth/logout')}>
-              LOGOUT
+              Logout
             </button>
           </div>
         </div>

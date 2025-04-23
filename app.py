@@ -54,8 +54,9 @@ from sentence_transformers import SentenceTransformer
 
 load_dotenv() 
 
-# model = SentenceTransformer(app_settings.azure_openai.embedding_name)
-model = SentenceTransformer("sentence-transformers/multi-qa-mpnet-base-dot-v1")
+model = SentenceTransformer(app_settings.azure_openai.embedding_name)
+print(f"model: {app_settings.azure_openai.embedding_name}")
+# model = SentenceTransformer(os.getenv("AZURE_OPENAI_EMBEDDING_NAME"))
 cosmos_account_uri = f"https://{app_settings.chat_history.account}.documents.azure.com:443/"
 
 cosmos_client = CosmosClient(cosmos_account_uri, credential=os.getenv("REACT_APP_AZURE_COSMOS_ACCOUNT_KEY"))

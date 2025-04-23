@@ -234,22 +234,22 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, sendFo
             defaultChecked={negativeFeedbackList.includes(Feedback.MissingCitation)}
             onChange={updateFeedbackList}></Checkbox>
           <Checkbox
-            label="Zitate sind falsch"
+            label="Zitate sind unzutreffend"
             id={Feedback.WrongCitation}
             defaultChecked={negativeFeedbackList.includes(Feedback.WrongCitation)}
             onChange={updateFeedbackList}></Checkbox>
           <Checkbox
-            label="Die Antwort stammt nicht aus meinen Daten"
+            label="Die Antwort basiert nicht auf meinen Daten"
             id={Feedback.OutOfScope}
             defaultChecked={negativeFeedbackList.includes(Feedback.OutOfScope)}
             onChange={updateFeedbackList}></Checkbox>
           <Checkbox
-            label="Ungenau oder irrelevant"
+            label="Ungenau oder nicht relevant"
             id={Feedback.InaccurateOrIrrelevant}
             defaultChecked={negativeFeedbackList.includes(Feedback.InaccurateOrIrrelevant)}
             onChange={updateFeedbackList}></Checkbox>
           <Checkbox
-            label="Andere"
+            label="Sonstiges"
             id={Feedback.OtherUnhelpful}
             defaultChecked={negativeFeedbackList.includes(Feedback.OtherUnhelpful)}
             onChange={updateFeedbackList}></Checkbox>
@@ -497,14 +497,14 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, sendFo
           showCloseButton: true
         }}>
         <Stack tokens={{ childrenGap: 4 }}>
-          <div>Ihr Feedback wird dieses Erlebnis verbessern.</div>
+          <div>Ihr Feedback hilft uns, die Qualität der Antworten gezielt zu verbessern.</div>
 
           {!showReportInappropriateFeedback ? <UnhelpfulFeedbackContent /> : <ReportInappropriateFeedbackContent />}
 
-          <div>Durch Drücken der Schaltfläche „Senden“ wird Ihr Feedback für den Anwendungseigentümer sichtbar.</div>
+          <div>Durch Klicken auf „Senden“ wird Ihr Feedback an das verantwortliche Team übermittelt.</div>
 
           <DefaultButton disabled={negativeFeedbackList.length < 1} onClick={onSubmitNegativeFeedback}>
-            Absenden
+            Senden
           </DefaultButton>
         </Stack>
       </Dialog>

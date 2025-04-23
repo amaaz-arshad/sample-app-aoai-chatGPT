@@ -43,23 +43,28 @@ const FileUpload: React.FC = () => {
   }
 
   const getCompanyName = () => {
-    console.log("FILTER_FIELD:",FILTER_FIELD)
+    console.log('FILTER_FIELD:', FILTER_FIELD)
     if (userDetails && userDetails?.[0]?.user_claims) {
       const companyClaim = userDetails[0].user_claims.find(claim => claim.typ === FILTER_FIELD)
-      return companyClaim ? companyClaim.val.trim().toLowerCase().replace(/^\.+|\.+$/g, '') : ''
+      return companyClaim
+        ? companyClaim.val
+            .trim()
+            .toLowerCase()
+            .replace(/^\.+|\.+$/g, '')
+        : ''
     }
     return ''
   }
 
   const fetchFiles = async () => {
     try {
-      const companyName = getCompanyName();
+      const companyName = getCompanyName()
       // Use encodeURIComponent to properly encode the company name in the URL
-      const response = await axios.get<FileUploadResponse>(`/pipeline/list?company=${encodeURIComponent(companyName)}`);
-      console.log('files:', response.data);
-      setFiles(response.data.files);
+      const response = await axios.get<FileUploadResponse>(`/pipeline/list?company=${encodeURIComponent(companyName)}`)
+      console.log('files:', response.data)
+      setFiles(response.data.files)
     } catch (error) {
-      toast.error('Failed to fetch files');
+      toast.error('Abrufen der Dateien fehlgeschlagen')
     }
   }
 
@@ -75,7 +80,7 @@ const FileUpload: React.FC = () => {
 
   const handleUpload = async () => {
     if (!newFiles || newFiles.length === 0) {
-      toast.info('Please select files to upload.')
+      toast.info('Bitte wählen Sie die hochzuladenden Dateien aus.')
       return
     }
 
@@ -83,12 +88,15 @@ const FileUpload: React.FC = () => {
 
     // Prompt for organization name if no company name is found
     if (companyName === '') {
-      const inputOrganization = prompt('Please enter the organization name for the upload:')
+      const inputOrganization = prompt('Bitte geben Sie für den Upload den Organisationsnamen ein:')
       if (!inputOrganization || inputOrganization.trim() === '') {
-        toast.error('Organization name is required to upload files.')
+        toast.error('Zum Hochladen von Dateien ist der Name der Organisation erforderlich.')
         return
       }
-      companyName = inputOrganization.trim().toLowerCase().replace(/^\.+|\.+$/g, '')
+      companyName = inputOrganization
+        .trim()
+        .toLowerCase()
+        .replace(/^\.+|\.+$/g, '')
     }
 
     setUploading(true)
@@ -107,11 +115,11 @@ const FileUpload: React.FC = () => {
     })
 
     toast.promise(uploadPromise, {
-      pending: 'Processing and chunking files, this might take a while...',
-      success: 'Files uploaded and processed successfully!',
+      pending: 'Das Verarbeiten und Aufteilen von Dateien kann eine Weile dauern ...',
+      success: 'Dateien erfolgreich hochgeladen und verarbeitet!',
       error: {
         render({ data }: { data: any }) {
-          const errorMessage = data?.response?.data?.error || 'An error occurred during upload.'
+          const errorMessage = data?.response?.data?.error || 'Beim Hochladen ist ein Fehler aufgetreten.'
           return errorMessage
         }
       }
@@ -131,7 +139,7 @@ const FileUpload: React.FC = () => {
 
   const handleDeleteAll = async () => {
     const isConfirmed = window.confirm(
-      'Are you sure you want to delete files and documents? This action cannot be undone.'
+      'Möchten Sie Dateien und Dokumente wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden.'
     )
     if (!isConfirmed) return
 
@@ -147,9 +155,9 @@ const FileUpload: React.FC = () => {
       })
 
       toast.promise(deletePromise, {
-        pending: 'Deleting files and documents...',
-        success: 'Files and documents have been deleted!',
-        error: 'Failed to delete files and documents'
+        pending: 'Dateien und Dokumente werden gelöscht...',
+        success: 'Dateien und Dokumente wurden gelöscht!',
+        error: 'Das Löschen von Dateien und Dokumenten ist fehlgeschlagen'
       })
 
       await deletePromise
@@ -158,22 +166,22 @@ const FileUpload: React.FC = () => {
       setCurrentPage(1)
     } catch (error) {
       console.error('Error deleting files and documents:', error)
-      toast.error('An unexpected error occurred while deleting files.')
+      toast.error('Beim Löschen von Dateien ist ein unerwarteter Fehler aufgetreten.')
     }
   }
 
   const handleDeleteSingleFile = async (filename: string) => {
-    const isConfirmed = window.confirm(`Are you sure you want to delete '${filename}' and all related documents?`)
+    const isConfirmed = window.confirm(`Möchten Sie ${filename} und alle zugehörigen Dokumente wirklich löschen?`)
     if (!isConfirmed) return
 
     try {
       const deletePromise = axios.delete(`/pipeline/delete_file/${filename}`)
       toast.promise(deletePromise, {
-        pending: `Deleting ${filename}...`,
-        success: `File '${filename}' and associated documents have been deleted!`,
+        pending: `${filename} wird gelöscht...`,
+        success: `Datei „${filename}“ und zugehörige Dokumente wurden gelöscht!`,
         error: {
           render({ data }: { data: any }) {
-            const errorMessage = data?.response?.data?.message || `Failed to delete '${filename}'.`
+            const errorMessage = data?.response?.data?.message || `„${filename}“ konnte nicht gelöscht werden.`
             return errorMessage
           }
         }
@@ -221,7 +229,7 @@ const FileUpload: React.FC = () => {
       <Navbar />
       <div className="main-container">
         <div className="file-upload-container">
-          <h2>Upload and Process Files</h2>
+          {/* <h2>Upload and Process Files</h2> */}
           <div className="upload-section">
             <input
               id="file-input"
@@ -237,7 +245,7 @@ const FileUpload: React.FC = () => {
               className="btn btn-primary"
               disabled={uploading}
               style={{ backgroundColor: '#00CC96', borderColor: '#00CC96' }}>
-              {uploading ? 'Processing...' : 'Upload'}
+              {uploading ? 'Verarbeitung...' : 'Hochladen'}
             </button>
 
             <button
@@ -245,13 +253,13 @@ const FileUpload: React.FC = () => {
               className="btn btn-danger"
               disabled={files.length === 0 || uploading}
               style={{ marginLeft: '10px' }}>
-              Delete All
+              Alle löschen
             </button>
           </div>
 
           {!companyName && (
             <div className="filter-section mb-3">
-              <label htmlFor="organization-filter">Filter by Organization:</label>
+              <label htmlFor="organization-filter">Filtern nach Organisation: </label>
               <select
                 id="organization-filter"
                 value={organizationFilter}
@@ -259,7 +267,7 @@ const FileUpload: React.FC = () => {
                   setOrganizationFilter(e.target.value)
                   setCurrentPage(1)
                 }}>
-                <option value="all">All</option>
+                <option value="all">Alle</option>
                 {organizations.map((org, index) => (
                   <option key={index} value={org}>
                     {org}
@@ -270,9 +278,9 @@ const FileUpload: React.FC = () => {
           )}
 
           <div className="file-list">
-            <h3>Uploaded Files</h3>
+            <h3>Hochgeladene Dateien</h3>
             {currentFiles.length === 0 ? (
-              <p>No files uploaded yet.</p>
+              <p>Noch keine Dateien hochgeladen.</p>
             ) : (
               <ul>
                 {currentFiles.map((file, index) => (
@@ -289,7 +297,7 @@ const FileUpload: React.FC = () => {
                       onClick={() => handleDeleteSingleFile(file)}
                       className="btn btn-secondary"
                       disabled={uploading}>
-                      Delete
+                      Löschen
                     </button>
                   </li>
                 ))}
@@ -300,13 +308,13 @@ const FileUpload: React.FC = () => {
             {filteredFiles.length > filesPerPage && (
               <div className="pagination-controls" style={{ marginTop: '10px' }}>
                 <button onClick={handlePrevPage} className="btn btn-light" disabled={currentPage === 1}>
-                  Previous
+                  Vorherige
                 </button>
                 <span style={{ margin: '0 10px' }}>
-                  Page {currentPage} of {totalPages}
+                  Seite {currentPage} of {totalPages}
                 </span>
                 <button onClick={handleNextPage} className="btn btn-light" disabled={currentPage === totalPages}>
-                  Next
+                  Nächste
                 </button>
               </div>
             )}

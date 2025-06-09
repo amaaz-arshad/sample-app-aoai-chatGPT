@@ -433,25 +433,38 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, sendFo
         </Stack>
         {chevronIsExpanded && (
           <div className={styles.citationWrapper}>
-            {parsedAnswer?.citations.map((citation, idx) => {
-              // const citationFilepath = createCitationFilepath(citation, idx)
-              // const citationTitle = createCitationTitle(citation, idx)
+            {parsedAnswer?.citations.map((citation, index) => {
+              console.log('citation:', citation)
+              const idx = index + 1
+              const isPdf = citation.filepath?.toLowerCase().endsWith('.pdf')
+
+              const label = isPdf ? createCitationFilepath(citation, idx, true) : citation.title ?? ''
+
+              const handleClick = () => {
+                if (isPdf) {
+                  onCitationClicked2(citation)
+                } else {
+                  window.open(`https://amsterdam.publishone.nl/document/${citation.filepath}/content`, '_blank')
+                }
+              }
 
               return (
                 <span
-                  title={createCitationFilepath(citation, ++idx)}
+                  title={label}
                   tabIndex={0}
                   role="link"
                   key={idx}
-                  onClick={() => onCitationClicked2(citation)}
-                  onKeyDown={e => (e.key === 'Enter' || e.key === ' ' ? onCitationClicked2(citation) : null)}
+                  onClick={handleClick}
+                  onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && handleClick()}
                   className={styles.citationContainer}
-                  aria-label={createCitationFilepath(citation, idx)}>
+                  aria-label={label}>
                   <div className={styles.citation}>{idx}</div>
-                  {createCitationFilepath(citation, idx, true)}
+                  {label}
                 </span>
               )
 
+              // const citationFilepath = createCitationFilepath(citation, idx)
+              // const citationTitle = createCitationTitle(citation, idx)
               // return (
               //   <span
               //     title={citationTitle}

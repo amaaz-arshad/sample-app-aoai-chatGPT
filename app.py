@@ -46,6 +46,8 @@ import time
 import tempfile
 from azure.cosmos import CosmosClient, PartitionKey
 from sentence_transformers import SentenceTransformer
+import xml.etree.ElementTree as ET
+from typing import List
 
 # from rake_nltk import Rake
 
@@ -1473,5 +1475,280 @@ async def get_pdf():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+ # Helpers for upload xml
+
+def inline_to_md(elem) -> str:
+    """
+    Recursively convert an element and its children to inline Markdown,
+    handling <strong>, <em>, <code>, <a>, <img>, <br>, <span>, and other inline tags.
+    """
+    parts: List[str] = []
+    # Text before children
+    if elem.text:
+        parts.append(elem.text)
+
+    for child in elem:
+        tag = child.tag.lower()
+        if tag in ("strong", "b"):
+            parts.append(f"**{inline_to_md(child)}**")
+        elif tag in ("em", "i"):
+            parts.append(f"*{inline_to_md(child)}*")
+        elif tag == "code":
+            code_text = (child.text or "").strip()
+            parts.append(f"`{code_text}`")
+        elif tag == "a":
+            href = child.attrib.get("href", "").strip()
+            link_text = inline_to_md(child)
+            parts.append(f"[{link_text}]({href})")
+        elif tag == "img":
+            src = child.attrib.get("href", child.attrib.get("src", "")).strip()
+            alt = child.attrib.get("alt", child.attrib.get("id", "")).strip()
+            parts.append(f"![{alt}]({src})")
+        elif tag == "br":
+            parts.append("  \n")  # Markdown line break
+        else:
+            # For <span> and unknown inline tags, ignore tag but recurse
+            parts.append(inline_to_md(child))
+
+        # Tail text after this child
+        if child.tail:
+            parts.append(child.tail)
+
+    return "".join(parts).strip()
+
+
+def elem_to_markdown(elem, level: int = 0) -> List[str]:
+    """
+    Convert XML element tree to Markdown lines, handling headings,
+    paragraphs (including code blocks), lists, tables, images, footnotes.
+    """
+    md_lines: List[str] = []
+    tag = elem.tag.lower()
+    indent = "  " * level
+
+    # --- Headings ---
+    if tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
+        level_num = int(tag[1])
+        prefix = "#" * level_num
+        text = inline_to_md(elem)
+        md_lines.append(f"{prefix} {text}")
+        return md_lines
+
+    # --- Paragraphs & Code Blocks ---
+    if tag == "p":
+        if elem.attrib.get("class", "").lower() == "code":
+            md_lines.append("```")
+            md_lines.extend((elem.text or "").splitlines())
+            md_lines.append("```")
+        else:
+            text = inline_to_md(elem)
+            if text:
+                md_lines.append(text)
+        return md_lines
+
+    # --- Lists ---
+    if tag in ("list", "ul", "ol"):
+        list_type = elem.attrib.get("type", "bullet")
+        is_ordered = list_type != "bullet" or tag == "ol"
+        for li in elem.findall("li"):
+            p_child = li.find("p")
+            content = inline_to_md(p_child) if p_child is not None else inline_to_md(li)
+            prefix = f"{indent}{(str(li.attrib.get('value')) + '.') if is_ordered else '-'} "
+            md_lines.append(f"{prefix}{content}")
+            # Nested lists
+            for sub in li:
+                if sub.tag.lower() in ("list", "ul", "ol"):
+                    md_lines.extend(elem_to_markdown(sub, level + 1))
+        return md_lines
+
+    # --- Tables ---
+    if tag == "table":
+        tgroup = elem.find("tgroup") or elem
+        rows = tgroup.findall("row")
+        if rows:
+            headers = [inline_to_md(cell) for cell in rows[0].findall("entry")]
+            md_lines.append("| " + " | ".join(headers) + " |")
+            md_lines.append("| " + " | ".join(["---"] * len(headers)) + " |")
+            for row in rows[1:]:
+                cells = [inline_to_md(cell) for cell in row.findall("entry")]
+                md_lines.append("| " + " | ".join(cells) + " |")
+        return md_lines
+
+    # --- Footnotes ---
+    if tag == "footnote":
+        foot = "".join(elem.itertext()).strip()
+        if foot:
+            md_lines.append(f"> **Footnote:** {foot}")
+        return md_lines
+
+    # --- Fallback: recurse into children ---
+    for child in elem:
+        md_lines.extend(elem_to_markdown(child, level))
+
+    return md_lines
+
+def chunk_text(text: str, chunk_size: int = 5_000) -> List[str]:
+    """Split text into ~chunk_size chars while respecting code blocks & sentences."""
+    chunks, start, length = [], 0, len(text)
+    while start < length:
+        end = min(start + chunk_size, length)
+        segment = text[start:end]
+
+        # try to cut nicely
+        cut = max(
+            segment.rfind('```'),        # code block fence
+            segment.rfind('\n\n'),       # paragraph
+            segment.rfind('. '),         # sentence end
+        )
+        if cut != -1 and cut > chunk_size * 0.3:
+            end = start + cut + (0 if cut == segment.rfind('```') else 1)
+
+        chunks.append(text[start:end].strip())
+        start = end
+    return [c for c in chunks if c]
+
+
+def process_xml_file(
+        xml_path: str,
+        organization: str,
+        file_name: str,
+        model  # sentence-transformers model (already created globally in your app)
+):
+    """
+    Parse a single XML file and return a list of documents ready for
+    `search_client.upload_documents`.
+    """
+    tree = ET.parse(xml_path)
+    root = tree.getroot()
+    if root.tag != "folder":
+        root = root.find("folder")  # normalise
+
+    docs_array = []
+
+    # -- depth-first traversal of folders & docs -----------------------------
+    def traverse(folder_elem, parent_folder_id=None, parent_folder_name=None):
+        fid = folder_elem.attrib.get("id", parent_folder_id)
+        fname = folder_elem.findtext("naam", parent_folder_name).strip()
+
+        # process <document> children
+        for doc in folder_elem.findall("document"):
+            doc_id = doc.attrib.get("id", "")
+            title = doc.findtext("naam", "").strip() or "(untitled)"
+            body_section = doc.find("document/section")
+            markdown = "\n\n".join(elem_to_markdown(body_section)) if body_section is not None else ""
+
+            for idx, chunk in enumerate(chunk_text(markdown), 1):
+                header = f"{title} - Chunk {idx}"
+                content = f"{header}\n\n{chunk}"
+                content_vector = model.encode(content).tolist()
+
+                docs_array.append({
+                    "id": f"{doc_id}_{idx}",          
+                    "organization": organization,        
+                    "title": f"{fname}: {title} - Part {idx}",
+                    "page": int(doc_id),                     
+                    "total_pages": int(fid),               
+                    "file": doc_id,                   
+                    "content": content,
+                    "keywords": [],           
+                    "contentVector": content_vector,
+                })
+
+        # recurse into sub-folders
+        for sub in folder_elem.findall("folder"):
+            traverse(sub, fid, fname)
+
+    traverse(root)
+    return docs_array
+
+# ---- New endpoint ----------------------------------------------------------
+
+@bp.route("/pipeline/upload_xml", methods=["POST"])
+async def upload_xml_files():
+    """
+    Accept multipart form-data:
+      • 'organization' – organisation name
+      • 'files'        – one or more .xml files
+
+    Behaviour mirrors /pipeline/upload (PDF) but for XML.
+    """
+    # -----------------------------------------------------------------------
+    # 1. Parse form & files
+    # -----------------------------------------------------------------------
+    form = await request.form
+    files = (await request.files).getlist("files")
+
+    organization = form.get("organization")
+    if not organization:
+        return jsonify({"detail": "Missing 'organization' field."}), 400
+
+    organization_folder = organization.strip().lower().strip('.')
+
+    processed_files, skipped_files = [], []
+
+    # -----------------------------------------------------------------------
+    # 2. Loop through each uploaded XML
+    # -----------------------------------------------------------------------
+    for uploaded_file in files:
+        file_name = uploaded_file.filename
+        blob_path = f"{organization_folder}/{file_name}"
+        blob_client = blob_service_client.get_blob_client(container=container_name,
+                                                          blob=blob_path)
+
+        # ---- 2a. Skip if already exists -----------------------------------
+        if blob_client.exists():
+            skipped_files.append(file_name)
+            continue
+
+        # ---- 2b. Persist to a temporary file ------------------------------
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xml")
+        tmp_path = tmp.name
+        try:
+            await uploaded_file.save(tmp_path)
+            if os.path.getsize(tmp_path) == 0:
+                return jsonify({"detail": f"Uploaded file {file_name} is empty."}), 400
+
+            # ---- 2c. Convert → chunks → embeddings ------------------------
+            try:
+                docs_array = process_xml_file(
+                    xml_path=tmp_path,
+                    organization=organization,
+                    file_name=file_name,
+                    model=model   # ← the SentenceTransformer you already use globally
+                )
+            except Exception as e:
+                print(f"Error processing XML file {file_name}: {e}")
+                return jsonify({"detail": f"Failed to process file {file_name}: {e}"}), 500
+
+            # ---- 2d. Push to Cognitive Search ----------------------------
+            try:
+                search_client.upload_documents(docs_array)
+            except Exception as e:
+                print(f"Error indexing file {file_name}: {e}")
+                return jsonify({"detail": f"Indexing failed for {file_name}: {e}"}), 500
+
+            # ---- 2e. Upload raw XML to blob storage ----------------------
+            with open(tmp_path, "rb") as f_in:
+                blob_client.upload_blob(f_in.read(), overwrite=True)
+
+            processed_files.append(file_name)
+
+        finally:
+            # ---- 2f. Clean up temp file (Windows safe loop) --------------
+            for _ in range(5):
+                try:
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
+                    break
+                except PermissionError:
+                    time.sleep(0.5)
+
+    # -----------------------------------------------------------------------
+    # 3. Return summary
+    # -----------------------------------------------------------------------
+    return jsonify({
+        "processed_files": processed_files,
+        "skipped_files": skipped_files
+    })
 
 app = create_app()

@@ -41,13 +41,13 @@ from backend.utils import (
     format_pf_non_streaming_response,
 )
 from dotenv import load_dotenv
-import pymupdf4llm
+import fitz 
 import time
-import tempfile
 from azure.cosmos import CosmosClient, PartitionKey
 from sentence_transformers import SentenceTransformer
 import xml.etree.ElementTree as ET
 from typing import List
+from io import BytesIO
 
 # from rake_nltk import Rake
 
@@ -107,8 +107,8 @@ def create_app():
     app = Quart(__name__)
     app.register_blueprint(bp)
     app.config["TEMPLATES_AUTO_RELOAD"] = True
-    # Allow files up to 1000MB
-    app.config["MAX_CONTENT_LENGTH"] = 1000 * 1024 * 1024
+    # Allow files up to 100000MB
+    app.config["MAX_CONTENT_LENGTH"] = 100000 * 1024 * 1024
     
     @app.before_serving
     async def init():
@@ -1067,114 +1067,97 @@ async def list_files():
 #     rake.extract_keywords_from_text(content)
 #     return rake.get_ranked_phrases()
 
-# Modify your existing endpoint
+def extract_pages_as_markdown(pdf_bytes: bytes, file_name: str) -> list:
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    total_pages = doc.page_count
+    pages = []
+    for page in doc:
+        text = page.get_text("text")
+        md = f"## {file_name} - Page {page.number + 1}\n\n{text}\n"
+        pages.append({
+            "page_number": page.number + 1,
+            "markdown": md,
+            "total_pages": total_pages
+        })
+    return pages
+
 @bp.route("/pipeline/upload", methods=["POST"])
 async def upload_files():
-    # Await the form and files to retrieve their data
     form = await request.form
     files = (await request.files).getlist("files")
-
-    # print(files)
-
-    # Retrieve the 'organization' field from the form data
-    organization = form.get("organization")
-    print("organization:",organization)
-
-    processed_files = []
-    skipped_files = []
-
-    # Normalize the organization name to lowercase and trim spaces
-    organization_folder = organization.strip().lower().strip('.')
+    organization = form.get("organization", "").strip().lower().strip(".")
+    processed_files, skipped_files = [], []
 
     for uploaded_file in files:
-        print(f"uploaded_file {uploaded_file}")
         file_name = uploaded_file.filename
-        # Create the path for the file inside the folder based on organization
-        blob_path = f"{organization_folder}/{file_name}"  # folder_name/file_name
-
+        blob_path = f"{organization}/{file_name}"
         blob_client = blob_service_client.get_blob_client(
             container=container_name, blob=blob_path
         )
 
-        # Check if the file already exists in the blob container
+        # Skip if already present
         if blob_client.exists():
             skipped_files.append(file_name)
             continue
 
-        # Create a NamedTemporaryFile with delete=False
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-        temp_file_path = temp_file.name
+        # Read PDF bytes once
+        pdf_bytes = uploaded_file.read()
+        if not pdf_bytes:
+            print(f"Uploaded file {file_name} is empty.")
+            return jsonify({"detail": f"Uploaded file {file_name} is empty."}), 400
 
+        # Extract pages as Markdown
         try:
-            # Write the uploaded file's bytes to the temp file
-            await uploaded_file.save(temp_file_path)
+            print(f"\nProcessing {file_name}")
+            page_data = extract_pages_as_markdown(pdf_bytes, file_name)
+        except Exception as e:
+            print(f"Failed to parse {file_name}: {e}")
+            return jsonify({"detail": f"Failed to parse {file_name}: {e}"}), 500
 
-            if os.path.getsize(temp_file_path) == 0:
-                return jsonify({"detail": f"Uploaded file {file_name} is empty."}), 400
-
-            # Process the file with LlamaMarkdownReader
+        # Build array of page-docs for indexing
+        docs_array = []
+        for p in page_data:
+            md_content = p["markdown"]
             try:
-                llama_docs = pymupdf4llm.LlamaMarkdownReader().load_data(temp_file_path)
+                print(f"Embedding page {p['page_number']} of {file_name}")
+                vector = model.encode(md_content).tolist()
             except Exception as e:
-                return jsonify({"detail": f"Failed to process file {file_name}: {str(e)}"}), 500
+                print(f"Embedding failed for {file_name} page {p['page_number']}: {e}")
+                return jsonify({"detail": f"Embedding failed on {file_name} page {p['page_number']}: {e}"}), 500
 
-            # Build doc array and upload to Azure Cognitive Search
-            docs_array = []
-            for doc in llama_docs:
-                doc_dict = doc.dict()
-                metadata = doc_dict.get("metadata", {})
-                page = metadata.get("page")
-                total_pages = metadata.get("total_pages")
-                title_with_pages = f"Page {page}"
-                content = doc_dict.get("text", "")
+            docs_array.append({
+                "id": str(uuid.uuid4()),
+                "organization": organization,
+                "title": f"Page {p['page_number']}",
+                "page": p["page_number"],
+                "total_pages": p["total_pages"],
+                "file": file_name,
+                "content": md_content,
+                "contentVector": vector,
+                "keywords": []
+            })
 
-                # Extract keyphrases using RAKE
-                # keywords = extract_keyphrases(content)
+        # Index all pages in one batch
+        try:
+            search_client.upload_documents(docs_array)
+        except Exception as e:
+            print(f"Indexing failed for {file_name}: {e}")
+            return jsonify({"detail": f"Indexing failed for {file_name}: {e}"}), 500
 
-                # content_vector = generate_embeddings(content)
-                # Generate embedding using SentenceTransformer instead of OpenAI's API
-                content_vector = model.encode(content).tolist()
+        # Finally, upload the original PDF to Blob Storage
+        try:
+            blob_client.upload_blob(pdf_bytes, overwrite=True)
+        except Exception as e:
+            print(f"Blob upload failed for {file_name}: {e}")
+            return jsonify({"detail": f"Blob upload failed for {file_name}: {e}"}), 500
 
-                transformed_doc = {
-                    "id": doc_dict.get("id_"),
-                    "organization": organization,
-                    "title": title_with_pages,
-                    "page": page,
-                    "total_pages": total_pages,
-                    "file": file_name,
-                    "content": content,
-                    "contentVector": content_vector,
-                    "keywords": [],
-                }
-                docs_array.append(transformed_doc)
-
-            try:
-                search_client.upload_documents(docs_array)
-            except Exception as e:
-                return jsonify({"detail": f"Indexing failed for {file_name}: {str(e)}"}), 500
-
-            # Upload the file to Blob Storage inside the folder
-            with open(temp_file_path, "rb") as f:
-                pdf_data = f.read()
-            blob_client.upload_blob(pdf_data, overwrite=True)
-
-            processed_files.append(file_name)
-
-        finally:
-            # Retry loop to safely remove the temp file on Windows
-            for i in range(5):
-                try:
-                    if os.path.exists(temp_file_path):
-                        os.remove(temp_file_path)
-                    break
-                except PermissionError:
-                    time.sleep(0.5)
+        processed_files.append(file_name)
 
     return jsonify({
         "processed_files": processed_files,
         "skipped_files": skipped_files
-    })  
-    
+    })
+  
 # Route to delete all files or files by companyClaim or organizationFilter
 @bp.route("/pipeline/delete_all", methods=["DELETE"])
 async def delete_all():
@@ -1609,19 +1592,21 @@ def chunk_text(text: str, chunk_size: int = 5_000) -> List[str]:
 
 
 def process_xml_file(
-        xml_path: str,
+        xml_data: bytes,
         organization: str,
         file_name: str,
         model  # sentence-transformers model (already created globally in your app)
 ):
     """
-    Parse a single XML file and return a list of documents ready for
+    Parse XML data from bytes and return a list of documents ready for
     `search_client.upload_documents`.
     """
-    tree = ET.parse(xml_path)
-    root = tree.getroot()
-    if root.tag != "folder":
-        root = root.find("folder")  # normalise
+    try:
+        root = ET.fromstring(xml_data)
+        if root.tag != "folder":
+            root = root.find("folder")  # normalize
+    except ET.ParseError as e:
+        raise ValueError(f"Failed to parse XML data: {e}")
 
     docs_array = []
 
@@ -1635,22 +1620,24 @@ def process_xml_file(
             doc_id = doc.attrib.get("id", "")
             title = doc.findtext("naam", "").strip() or "(untitled)"
             body_section = doc.find("document/section")
+            print(f"\nProcessing document: {doc_id}")
             markdown = "\n\n".join(elem_to_markdown(body_section)) if body_section is not None else ""
 
             for idx, chunk in enumerate(chunk_text(markdown), 1):
                 header = f"{title} - Chunk {idx}"
                 content = f"{header}\n\n{chunk}"
+                print(f"Embedding chunk {idx} of document {doc_id}")
                 content_vector = model.encode(content).tolist()
 
                 docs_array.append({
-                    "id": f"{doc_id}_{idx}",          
-                    "organization": organization,        
+                    "id": f"{doc_id}_{idx}",
+                    "organization": organization,
                     "title": f"{fname}: {title} - Part {idx}",
-                    "page": int(doc_id),                     
-                    "total_pages": int(fid),               
-                    "file": doc_id,                   
+                    "page": int(doc_id),
+                    "total_pages": int(fid),
+                    "file": doc_id,
                     "content": content,
-                    "keywords": [],           
+                    "keywords": [],
                     "contentVector": content_vector,
                 })
 
@@ -1661,6 +1648,7 @@ def process_xml_file(
     traverse(root)
     return docs_array
 
+
 # ---- New endpoint ----------------------------------------------------------
 
 @bp.route("/pipeline/upload_xml", methods=["POST"])
@@ -1669,86 +1657,63 @@ async def upload_xml_files():
     Accept multipart form-data:
       • 'organization' – organisation name
       • 'files'        – one or more .xml files
-
-    Behaviour mirrors /pipeline/upload (PDF) but for XML.
     """
-    # -----------------------------------------------------------------------
-    # 1. Parse form & files
-    # -----------------------------------------------------------------------
     form = await request.form
     files = (await request.files).getlist("files")
 
     organization = form.get("organization")
     if not organization:
+        print("Missing 'organization' field in form data.")
         return jsonify({"detail": "Missing 'organization' field."}), 400
 
     organization_folder = organization.strip().lower().strip('.')
 
     processed_files, skipped_files = [], []
 
-    # -----------------------------------------------------------------------
-    # 2. Loop through each uploaded XML
-    # -----------------------------------------------------------------------
     for uploaded_file in files:
         file_name = uploaded_file.filename
         blob_path = f"{organization_folder}/{file_name}"
-        blob_client = blob_service_client.get_blob_client(container=container_name,
-                                                          blob=blob_path)
+        blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_path)
 
-        # ---- 2a. Skip if already exists -----------------------------------
+        # Skip if already exists
         if blob_client.exists():
             skipped_files.append(file_name)
             continue
 
-        # ---- 2b. Persist to a temporary file ------------------------------
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xml")
-        tmp_path = tmp.name
+        # Read file content directly from request
+        file_content = uploaded_file.read()
+        if len(file_content) == 0:
+            print(f"Uploaded file {file_name} is empty.")
+            return jsonify({"detail": f"Uploaded file {file_name} is empty."}), 400
+
+        # Process XML data directly from bytes
         try:
-            await uploaded_file.save(tmp_path)
-            if os.path.getsize(tmp_path) == 0:
-                return jsonify({"detail": f"Uploaded file {file_name} is empty."}), 400
+            docs_array = process_xml_file(
+                xml_data=file_content,
+                organization=organization,
+                file_name=file_name,
+                model=model   # SentenceTransformer model
+            )
+        except Exception as e:
+            print(f"Failed to process file {file_name}: {e}")
+            return jsonify({"detail": f"Failed to process file {file_name}: {e}"}), 500
 
-            # ---- 2c. Convert → chunks → embeddings ------------------------
-            try:
-                docs_array = process_xml_file(
-                    xml_path=tmp_path,
-                    organization=organization,
-                    file_name=file_name,
-                    model=model   # ← the SentenceTransformer you already use globally
-                )
-            except Exception as e:
-                print(f"Error processing XML file {file_name}: {e}")
-                return jsonify({"detail": f"Failed to process file {file_name}: {e}"}), 500
+        # Push to Cognitive Search
+        try:
+            search_client.upload_documents(docs_array)
+        except Exception as e:
+            print(f"Indexing failed for {file_name}: {e}")
+            return jsonify({"detail": f"Indexing failed for {file_name}: {e}"}), 500
 
-            # ---- 2d. Push to Cognitive Search ----------------------------
-            try:
-                search_client.upload_documents(docs_array)
-            except Exception as e:
-                print(f"Error indexing file {file_name}: {e}")
-                return jsonify({"detail": f"Indexing failed for {file_name}: {e}"}), 500
+        # Upload raw XML to blob storage
+        blob_client.upload_blob(file_content, overwrite=True)
 
-            # ---- 2e. Upload raw XML to blob storage ----------------------
-            with open(tmp_path, "rb") as f_in:
-                blob_client.upload_blob(f_in.read(), overwrite=True)
+        processed_files.append(file_name)
 
-            processed_files.append(file_name)
-
-        finally:
-            # ---- 2f. Clean up temp file (Windows safe loop) --------------
-            for _ in range(5):
-                try:
-                    if os.path.exists(tmp_path):
-                        os.remove(tmp_path)
-                    break
-                except PermissionError:
-                    time.sleep(0.5)
-
-    # -----------------------------------------------------------------------
-    # 3. Return summary
-    # -----------------------------------------------------------------------
     return jsonify({
         "processed_files": processed_files,
         "skipped_files": skipped_files
     })
+
 
 app = create_app()

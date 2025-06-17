@@ -48,6 +48,9 @@ from sentence_transformers import SentenceTransformer
 import xml.etree.ElementTree as ET
 from typing import List
 from io import BytesIO
+import gc
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 # from rake_nltk import Rake
 
@@ -102,6 +105,10 @@ bp = Blueprint("routes", __name__, static_folder="static", template_folder="stat
 
 cosmos_db_ready = asyncio.Event()
 
+MAX_WORKERS = int(os.getenv("THREAD_POOL_MAX_WORKERS", "4"))
+
+# Initialize a thread pool for CPU-bound tasks
+executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
 def create_app():
     app = Quart(__name__)
@@ -1081,50 +1088,35 @@ def extract_pages_as_markdown(pdf_bytes: bytes, file_name: str) -> list:
         })
     return pages
 
-@bp.route("/pipeline/upload", methods=["POST"])
-async def upload_files():
-    form = await request.form
-    files = (await request.files).getlist("files")
-    organization = form.get("organization", "").strip().lower().strip(".")
-    processed_files, skipped_files = [], []
 
-    for uploaded_file in files:
-        file_name = uploaded_file.filename
-        blob_path = f"{organization}/{file_name}"
-        blob_client = blob_service_client.get_blob_client(
-            container=container_name, blob=blob_path
-        )
 
-        # Skip if already present
-        if blob_client.exists():
-            skipped_files.append(file_name)
-            continue
-
-        # Read PDF bytes once
+async def process_single_file(uploaded_file, organization):
+    file_name = uploaded_file.filename
+    blob_path = f"{organization}/{file_name}"
+    blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_path)
+    
+    if blob_client.exists():
+        return None, file_name  # Skip existing
+    
+    try:
         pdf_bytes = uploaded_file.read()
-        if not pdf_bytes:
-            print(f"Uploaded file {file_name} is empty.")
-            return jsonify({"detail": f"Uploaded file {file_name} is empty."}), 400
-
-        # Extract pages as Markdown
-        try:
-            print(f"\nProcessing {file_name}")
-            page_data = extract_pages_as_markdown(pdf_bytes, file_name)
-        except Exception as e:
-            print(f"Failed to parse {file_name}: {e}")
-            return jsonify({"detail": f"Failed to parse {file_name}: {e}"}), 500
-
-        # Build array of page-docs for indexing
+        loop = asyncio.get_running_loop()
+        
+        # Offload CPU-intensive tasks to thread pool
+        print(f"Processing file: {file_name}")
+        page_data = await loop.run_in_executor(
+            executor, 
+            lambda: extract_pages_as_markdown(pdf_bytes, file_name)
+        )
+        
         docs_array = []
         for p in page_data:
-            md_content = p["markdown"]
-            try:
-                print(f"Embedding page {p['page_number']} of {file_name}")
-                vector = model.encode(md_content).tolist()
-            except Exception as e:
-                print(f"Embedding failed for {file_name} page {p['page_number']}: {e}")
-                return jsonify({"detail": f"Embedding failed on {file_name} page {p['page_number']}: {e}"}), 500
-
+            # Process embeddings in thread pool
+            print(f"Generating embeddings for page {p['page_number']} of {file_name}")
+            vector = await loop.run_in_executor(
+                executor,
+                lambda c=p["markdown"]: model.encode(c).tolist()
+            )
             docs_array.append({
                 "id": str(uuid.uuid4()),
                 "organization": organization,
@@ -1132,32 +1124,53 @@ async def upload_files():
                 "page": p["page_number"],
                 "total_pages": p["total_pages"],
                 "file": file_name,
-                "content": md_content,
+                "content": p["markdown"],
                 "contentVector": vector,
                 "keywords": []
             })
+        
+        # Upload in batches of 5 pages
+        for i in range(0, len(docs_array), 5):
+            batch = docs_array[i:i+5]
+            search_client.upload_documents(batch)
+            await asyncio.sleep(0.5)  # Throttle requests
+        
+        # Upload to blob storage
+        blob_client.upload_blob(pdf_bytes)
+        return file_name, None
+    
+    except Exception as e:
+        logging.error(f"Failed {file_name}: {str(e)}")
+        return None, file_name
+    finally:
+        # Explicit memory cleanup
+        del pdf_bytes
+        del page_data
+        del docs_array
+        gc.collect()
 
-        # Index all pages in one batch
-        try:
-            search_client.upload_documents(docs_array)
-        except Exception as e:
-            print(f"Indexing failed for {file_name}: {e}")
-            return jsonify({"detail": f"Indexing failed for {file_name}: {e}"}), 500
-
-        # Finally, upload the original PDF to Blob Storage
-        try:
-            blob_client.upload_blob(pdf_bytes, overwrite=True)
-        except Exception as e:
-            print(f"Blob upload failed for {file_name}: {e}")
-            return jsonify({"detail": f"Blob upload failed for {file_name}: {e}"}), 500
-
-        processed_files.append(file_name)
-
+@bp.route("/pipeline/upload", methods=["POST"])
+async def upload_files():
+    form = await request.form
+    files = (await request.files).getlist("files")
+    organization = form.get("organization", "").strip().lower().strip(".")
+    
+    processed_files = []
+    skipped_files = []
+    
+    # Process files sequentially with async
+    for uploaded_file in files:
+        processed, skipped = await process_single_file(uploaded_file, organization)
+        if processed:
+            processed_files.append(processed)
+        if skipped:
+            skipped_files.append(skipped)
+    
     return jsonify({
         "processed_files": processed_files,
         "skipped_files": skipped_files
     })
-  
+
 # Route to delete all files or files by companyClaim or organizationFilter
 @bp.route("/pipeline/delete_all", methods=["DELETE"])
 async def delete_all():
@@ -1630,7 +1643,7 @@ def process_xml_file(
                 content_vector = model.encode(content).tolist()
 
                 docs_array.append({
-                    "id": f"{doc_id}_{idx}",
+                    "id": str(uuid.uuid4()),
                     "organization": organization,
                     "title": f"{fname}: {title} - Part {idx}",
                     "page": int(doc_id),
@@ -1647,69 +1660,79 @@ def process_xml_file(
 
     traverse(root)
     return docs_array
+    
 
+async def process_single_xml_file(uploaded_file, organization_folder):
+    file_name = uploaded_file.filename
+    blob_path = f"{organization_folder}/{file_name}"
+    blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_path)
 
-# ---- New endpoint ----------------------------------------------------------
+    # Skip existing files
+    if blob_client.exists():
+        return None, file_name  # (processed, skipped)
+
+    try:
+        # Read file content
+        file_content = uploaded_file.read()
+        if not file_content:
+            return None, file_name
+
+        loop = asyncio.get_running_loop()
+        
+        # Offload XML processing to thread pool
+        docs_array = await loop.run_in_executor(
+            executor,
+            lambda: process_xml_file(
+                xml_data=file_content,
+                organization=organization_folder,
+                file_name=file_name,
+                model=model
+            )
+        )
+        
+        # Upload documents in smaller batches
+        for i in range(0, len(docs_array), 5):  # 5 documents per batch
+            batch = docs_array[i:i+5]
+            try:
+                search_client.upload_documents(batch)
+                await asyncio.sleep(0.3)  # Throttle requests
+            except Exception as e:
+                logging.error(f"Batch upload failed for {file_name}: {str(e)}")
+        
+        # Upload original XML to blob storage
+        blob_client.upload_blob(file_content)
+        return file_name, None
+    
+    except Exception as e:
+        logging.error(f"Failed to process {file_name}: {str(e)}")
+        return None, file_name
+    finally:
+        # Explicit memory cleanup
+        del file_content
+        if 'docs_array' in locals():
+            del docs_array
+        gc.collect()
 
 @bp.route("/pipeline/upload_xml", methods=["POST"])
 async def upload_xml_files():
-    """
-    Accept multipart form-data:
-      • 'organization' – organisation name
-      • 'files'        – one or more .xml files
-    """
     form = await request.form
     files = (await request.files).getlist("files")
-
-    organization = form.get("organization")
+    organization = form.get("organization", "").strip().lower().strip('.')
+    
     if not organization:
-        print("Missing 'organization' field in form data.")
         return jsonify({"detail": "Missing 'organization' field."}), 400
 
-    organization_folder = organization.strip().lower().strip('.')
-
-    processed_files, skipped_files = [], []
-
+    processed_files = []
+    skipped_files = []
+    
+    # Process files sequentially
     for uploaded_file in files:
-        file_name = uploaded_file.filename
-        blob_path = f"{organization_folder}/{file_name}"
-        blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_path)
-
-        # Skip if already exists
-        if blob_client.exists():
-            skipped_files.append(file_name)
-            continue
-
-        # Read file content directly from request
-        file_content = uploaded_file.read()
-        if len(file_content) == 0:
-            print(f"Uploaded file {file_name} is empty.")
-            return jsonify({"detail": f"Uploaded file {file_name} is empty."}), 400
-
-        # Process XML data directly from bytes
-        try:
-            docs_array = process_xml_file(
-                xml_data=file_content,
-                organization=organization,
-                file_name=file_name,
-                model=model   # SentenceTransformer model
-            )
-        except Exception as e:
-            print(f"Failed to process file {file_name}: {e}")
-            return jsonify({"detail": f"Failed to process file {file_name}: {e}"}), 500
-
-        # Push to Cognitive Search
-        try:
-            search_client.upload_documents(docs_array)
-        except Exception as e:
-            print(f"Indexing failed for {file_name}: {e}")
-            return jsonify({"detail": f"Indexing failed for {file_name}: {e}"}), 500
-
-        # Upload raw XML to blob storage
-        blob_client.upload_blob(file_content, overwrite=True)
-
-        processed_files.append(file_name)
-
+        processed, skipped = await process_single_xml_file(uploaded_file, organization)
+        if processed:
+            processed_files.append(processed)
+        if skipped:
+            skipped_files.append(skipped)
+    
     return jsonify({
         "processed_files": processed_files,
         "skipped_files": skipped_files

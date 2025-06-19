@@ -3,17 +3,22 @@ import { NavLink } from 'react-router-dom'
 import SnapLogo from '../../assets/Snap.svg'
 import './Navbar.css'
 import { useAppUser } from '../../state/AppUserProvider'
-import { FILTER_FIELD2 } from '../../constants/variables'
+import { FILTER_FIELD, FILTER_FIELD2 } from '../../constants/variables'
 
 export default function Navbar() {
   const { userInfo, authEnabled } = useAppUser()
-  const [companyName, setCompanyName] = useState<string>('')
+  const [userType, setUserType] = useState<string>('')
+  const [organization, setOrganization] = useState<string>('')
 
   useEffect(() => {
     if (userInfo && userInfo.length > 0) {
-      const companyClaim = userInfo[0].user_claims.find(claim => claim.typ === FILTER_FIELD2)
-      console.log('streetaddress value in navbar:', companyClaim)
-      setCompanyName(companyClaim ? companyClaim.val.trim().toLowerCase() : '')
+      const organizationClaim = userInfo[0].user_claims.find(claim => claim.typ === FILTER_FIELD)
+      console.log('city value in navbar:', organizationClaim)
+      setOrganization(organizationClaim ? organizationClaim.val.trim().toLowerCase() : '')
+
+      const userTypeClaim = userInfo[0].user_claims.find(claim => claim.typ === FILTER_FIELD2)
+      console.log('streetaddress value in navbar:', userTypeClaim)
+      setUserType(userTypeClaim ? userTypeClaim.val.trim().toLowerCase() : '')
     }
   }, [userInfo])
 
@@ -40,12 +45,14 @@ export default function Navbar() {
               to="/">
               Chatbot
             </NavLink>
-            <NavLink
-              className={({ isActive }) => (isActive ? 'nav-link active fw-bold me-2' : 'nav-link fw-bold me-2')}
-              to="/upload-files">
-              Dateien hochladen
-            </NavLink>
-            {(!companyName || companyName != 'user') && (
+            {organization !== 'vjoon k4' && (
+              <NavLink
+                className={({ isActive }) => (isActive ? 'nav-link active fw-bold me-2' : 'nav-link fw-bold me-2')}
+                to="/upload-files">
+                Dateien hochladen
+              </NavLink>
+            )}
+            {(!userType || userType != 'user') && (
               <>
                 <NavLink
                   className={({ isActive }) => (isActive ? 'nav-link active fw-bold me-2' : 'nav-link fw-bold me-2')}

@@ -1,0 +1,465 @@
+import React, { useState, useEffect, useContext } from 'react'
+import axios from 'axios'
+import { toast } from 'react-toastify'
+import 'react-toastify/dist/ReactToastify.css'
+import { AppStateContext } from '../../state/AppProvider'
+import Navbar from '../../components/Navbar/Navbar'
+import { getUserInfo, UserInfo } from '../../api'
+import { FILTER_FIELD } from '../../constants/variables'
+import './FileUpload.css'
+
+interface FileUploadResponse {
+  files: string[]
+}
+
+const FileUpload: React.FC = () => {
+  const appStateContext = useContext(AppStateContext)
+  const AUTH_ENABLED = appStateContext?.state.frontendSettings?.auth_enabled
+
+  /* ------------------------------------------------------------------ */
+  /*  state                                                             */
+  /* ------------------------------------------------------------------ */
+  const [files, setFiles] = useState<string[]>([])
+  const [newFiles, setNewFiles] = useState<FileList | null>(null)
+  const [uploading, setUploading] = useState<boolean>(false)
+  const [organizationFilter, setOrganizationFilter] = useState<string>('all')
+  const [showAuthMessage, setShowAuthMessage] = useState<boolean | undefined>()
+  const [userDetails, setUserDetails] = useState<UserInfo[]>([])
+  const [currentPage, setCurrentPage] = useState<number>(1)
+  const [processingStatus, setProcessingStatus] = useState('idle')
+  const filesPerPage = 10
+
+  /* ------------------------------------------------------------------ */
+  /*  auth helper                                                       */
+  /* ------------------------------------------------------------------ */
+  useEffect(() => {
+    if (AUTH_ENABLED !== undefined) getUserInfoList()
+  }, [AUTH_ENABLED])
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout
+
+    if (processingStatus === 'processing') {
+      interval = setInterval(() => {
+        checkProcessingStatus()
+      }, 10000) // Check every 10 seconds
+    }
+
+    return () => {
+      if (interval) clearInterval(interval)
+    }
+  }, [processingStatus])
+
+  const getUserInfoList = async () => {
+    if (!AUTH_ENABLED) {
+      setShowAuthMessage(false)
+      return
+    }
+    const userInfoList = await getUserInfo()
+    setUserDetails(userInfoList)
+    if (userInfoList.length === 0 && window.location.hostname !== '127.0.0.1') {
+      setShowAuthMessage(true)
+    } else {
+      setShowAuthMessage(false)
+    }
+  }
+
+  /* ------------------------------------------------------------------ */
+  /*  company / organisation helpers                                    */
+  /* ------------------------------------------------------------------ */
+  const getCompanyName = () => {
+    if (userDetails?.[0]?.user_claims) {
+      const claim = userDetails[0].user_claims.find(c => c.typ === FILTER_FIELD)
+      return claim
+        ? claim.val
+            .trim()
+            .toLowerCase()
+            .replace(/^\.+|\.+$/g, '')
+        : ''
+    }
+    return ''
+  }
+
+  const validateOrgName = async (): Promise<string | null> => {
+    let org = getCompanyName()
+    if (org === '') {
+      const input = prompt('Bitte geben Sie für den Upload den Organisationsnamen ein:')
+      if (!input?.trim()) {
+        toast.error('Zum Hochladen von Dateien ist der Name der Organisation erforderlich.')
+        return null
+      }
+      org = input
+        .trim()
+        .toLowerCase()
+        .replace(/^\.+|\.+$/g, '')
+    }
+    return org
+  }
+
+  /* ------------------------------------------------------------------ */
+  /*  list files                                                        */
+  /* ------------------------------------------------------------------ */
+  const fetchFiles = async () => {
+    try {
+      const companyName = getCompanyName()
+      const { data } = await axios.get<FileUploadResponse>(`/pipeline/list?company=${encodeURIComponent(companyName)}`)
+      setFiles(data.files)
+    } catch {
+      toast.error('Abrufen der Dateien fehlgeschlagen')
+    }
+  }
+
+  useEffect(() => {
+    fetchFiles()
+  }, [])
+
+  /* ------------------------------------------------------------------ */
+  /*  file input change                                                 */
+  /* ------------------------------------------------------------------ */
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) setNewFiles(e.target.files)
+  }
+
+  /* ------------------------------------------------------------------ */
+  /*  PDF upload                                                        */
+  /* ------------------------------------------------------------------ */
+  const handleUploadPdf = async () => {
+    if (!newFiles?.length) {
+      toast.info('Bitte wählen Sie die hochzuladenden Dateien aus.')
+      return
+    }
+
+    if (Array.from(newFiles).some(f => !f.name.toLowerCase().endsWith('.pdf'))) {
+      toast.info('Bitte wählen Sie nur PDF-Dateien für diesen Button aus.')
+      return
+    }
+
+    const organization = await validateOrgName()
+    if (!organization) return
+
+    setUploading(true)
+    setProcessingStatus('processing') // Set processing status
+
+    const formData = new FormData()
+    Array.from(newFiles).forEach(file => formData.append('files', file))
+    formData.append('organization', organization)
+
+    const uploadPromise = axios.post<FileUploadResponse>('/pipeline/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+
+    toast.promise(uploadPromise, {
+      pending: 'Das Verarbeiten und Aufteilen von Dateien kann eine Weile dauern...',
+      success: {
+        render({ data }) {
+          // Reset status on success
+          setProcessingStatus('idle')
+          return 'Dateien wurden zur Verarbeitung in die Warteschlange gestellt!'
+        }
+      },
+      error: {
+        render() {
+          // Reset status on error
+          setProcessingStatus('idle')
+          return 'Beim Hochladen ist ein Fehler aufgetreten.'
+        }
+      }
+    })
+
+    try {
+      await uploadPromise
+      setNewFiles(null)
+
+      // Start polling for status updates
+      const pollStatus = async () => {
+        try {
+          const { data } = await axios.get('/pipeline/status')
+          if (data.processed_files.length > 0 || data.skipped_files.length > 0) {
+            // Processing completed
+            setProcessingStatus('idle')
+            fetchFiles() // Refresh file list
+            toast.success(
+              `Verarbeitung abgeschlossen! Erfolgreich: ${data.processed_files.length}, Übersprungen: ${data.skipped_files.length}`
+            )
+          } else {
+            // Still processing, poll again after delay
+            setTimeout(pollStatus, 5000)
+          }
+        } catch (pollError) {
+          setProcessingStatus('idle')
+          toast.error('Fehler beim Abrufen des Verarbeitungsstatus')
+        }
+      }
+
+      // Start initial polling after 10 seconds
+      setTimeout(pollStatus, 10000)
+    } catch (err) {
+      console.error('Fehler beim Hochladen:', err)
+      setProcessingStatus('idle')
+    } finally {
+      setUploading(false)
+      ;(document.getElementById('file-input') as HTMLInputElement).value = ''
+    }
+  }
+
+  /* ------------------------------------------------------------------ */
+  /*  XML upload – NEW                                                  */
+  /* ------------------------------------------------------------------ */
+  const handleUploadXml = async () => {
+    if (!newFiles?.length) {
+      toast.info('Bitte wählen Sie die hochzuladenden Dateien aus.')
+      return
+    }
+    if (Array.from(newFiles).some(f => !f.name.toLowerCase().endsWith('.xml'))) {
+      toast.info('Bitte wählen Sie nur XML-Dateien für diesen Button aus.')
+      return
+    }
+
+    const organization = await validateOrgName()
+    if (!organization) return
+
+    setUploading(true)
+    const formData = new FormData()
+    Array.from(newFiles).forEach(file => formData.append('files', file))
+    formData.append('organization', organization)
+
+    const uploadPromise = axios.post<FileUploadResponse>('/pipeline/upload_xml', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+
+    toast.promise(uploadPromise, {
+      pending: 'XML wird verarbeitet...',
+      success: 'XML-Dateien erfolgreich hochgeladen!',
+      error: 'Beim Hochladen ist ein Fehler aufgetreten.'
+    })
+
+    try {
+      await uploadPromise
+      setNewFiles(null)
+    } finally {
+      setUploading(false)
+      ;(document.getElementById('file-input') as HTMLInputElement).value = ''
+      fetchFiles()
+    }
+  }
+
+  /* ------------------------------------------------------------------ */
+  /*  delete helpers (unchanged)                                        */
+  /* ------------------------------------------------------------------ */
+  const handleDeleteAll = async () => {
+    const isConfirmed = window.confirm(
+      'Möchten Sie Dateien und Dokumente wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden.'
+    )
+    if (!isConfirmed) return
+
+    try {
+      const formData = new FormData()
+      formData.append('organizationFilter', organizationFilter)
+      const companyName = getCompanyName()
+      if (companyName) formData.append('companyClaim', companyName)
+
+      const deletePromise = axios.delete(`/pipeline/delete_all`, { data: formData })
+
+      toast.promise(deletePromise, {
+        pending: 'Dateien und Dokumente werden gelöscht...',
+        success: 'Dateien und Dokumente wurden gelöscht!',
+        error: 'Das Löschen von Dateien und Dokumenten ist fehlgeschlagen'
+      })
+
+      await deletePromise
+      await fetchFiles()
+      setOrganizationFilter('all')
+      setCurrentPage(1)
+    } catch (error) {
+      console.error('Error deleting files and documents:', error)
+      toast.error('Beim Löschen von Dateien ist ein unerwarteter Fehler aufgetreten.')
+    }
+  }
+
+  const handleDeleteSingleFile = async (filename: string) => {
+    const isConfirmed = window.confirm(`Möchten Sie ${filename} und alle zugehörigen Dokumente wirklich löschen?`)
+    if (!isConfirmed) return
+
+    try {
+      const deletePromise = axios.delete(`/pipeline/delete_file/${filename}`)
+
+      toast.promise(deletePromise, {
+        pending: `${filename} wird gelöscht...`,
+        success: `Datei „${filename}“ und zugehörige Dokumente wurden gelöscht!`,
+        error: {
+          render({ data }: { data: any }) {
+            const msg = data?.response?.data?.message || `„${filename}“ konnte nicht gelöscht werden.`
+            return msg
+          }
+        }
+      })
+
+      await deletePromise
+      await fetchFiles()
+      setOrganizationFilter('all')
+    } catch (error) {}
+  }
+
+  /* ------------------------------------------------------------------ */
+  /*  filter + pagination (unchanged)                                   */
+  /* ------------------------------------------------------------------ */
+  const companyName = getCompanyName()
+  const organizations = companyName ? [] : Array.from(new Set(files.map(f => f.split('/')[0])))
+
+  const filteredFiles = companyName
+    ? files.filter(f => f.startsWith(`${companyName}/`))
+    : organizationFilter === 'all'
+      ? files
+      : files.filter(f => f.startsWith(`${organizationFilter}/`))
+
+  const indexOfLastFile = currentPage * filesPerPage
+  const indexOfFirstFile = indexOfLastFile - filesPerPage
+  const currentFiles = filteredFiles.slice(indexOfFirstFile, indexOfLastFile)
+  const totalPages = Math.ceil(filteredFiles.length / filesPerPage)
+
+  const handleNextPage = () => {
+    if (currentPage < totalPages) setCurrentPage(p => p + 1)
+  }
+  const handlePrevPage = () => {
+    if (currentPage > 1) setCurrentPage(p => p - 1)
+  }
+
+  const checkProcessingStatus = async () => {
+    try {
+      const response = await axios.get('/pipeline/status')
+      const { processed_files, skipped_files } = response.data
+
+      if (processed_files.length > 0 || skipped_files.length > 0) {
+        setProcessingStatus('completed')
+        fetchFiles()
+        toast.info(`Verarbeitet: ${processed_files.length} Dateien, Übersprungen: ${skipped_files.length}`)
+      } else {
+        toast.info('Verarbeitung läuft noch...')
+      }
+    } catch (error) {
+      toast.error('Fehler beim Abrufen des Status')
+    }
+  }
+
+  /* ------------------------------------------------------------------ */
+  /*  render                                                            */
+  /* ------------------------------------------------------------------ */
+  return (
+    <>
+      <Navbar />
+      <div className="main-container">
+        <div className="file-upload-container">
+          <div className="upload-section">
+            <input
+              id="file-input"
+              type="file"
+              multiple
+              accept=".pdf,.xml,application/pdf,text/xml"
+              onChange={handleFileChange}
+              className="file-input"
+              disabled={uploading}
+            />
+
+            {/* PDF button */}
+            <button
+              onClick={handleUploadPdf}
+              className="btn btn-primary"
+              disabled={uploading}
+              style={{ backgroundColor: '#00CC96', borderColor: '#00CC96' }}>
+              {uploading ? 'Verarbeitung...' : 'PDF hochladen'}
+            </button>
+
+            {/* XML button – NEW */}
+            <button
+              onClick={handleUploadXml} // NEW
+              className="btn btn-primary"
+              disabled={uploading}
+              style={{ backgroundColor: '#006DCC', borderColor: '#006DCC', marginLeft: '8px' }}>
+              {uploading ? 'Verarbeitung...' : 'XML hochladen'}
+            </button>
+
+            {processingStatus === 'processing' && (
+              <button
+                onClick={checkProcessingStatus}
+                className="btn btn-info"
+                style={{ marginLeft: '8px', backgroundColor: '#17a2b8', borderColor: '#17a2b8' }}>
+                Status prüfen
+              </button>
+            )}
+
+            {/* Delete all */}
+            <button
+              onClick={handleDeleteAll}
+              className="btn btn-danger"
+              disabled={files.length === 0 || uploading}
+              style={{ marginLeft: '10px' }}>
+              Alle löschen
+            </button>
+          </div>
+
+          {/* Filter by organisation */}
+          {!companyName && (
+            <div className="filter-section mb-3">
+              <label htmlFor="organization-filter">Filtern nach Organisation: </label>
+              <select
+                id="organization-filter"
+                value={organizationFilter}
+                onChange={e => {
+                  setOrganizationFilter(e.target.value)
+                  setCurrentPage(1)
+                }}>
+                <option value="all">Alle</option>
+                {organizations.map((org, i) => (
+                  <option key={i} value={org}>
+                    {org}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* file list */}
+          <div className="file-list">
+            <h3>Hochgeladene Dateien</h3>
+            {currentFiles.length === 0 ? (
+              <p>Noch keine Dateien hochgeladen.</p>
+            ) : (
+              <ul>
+                {currentFiles.map((file, i) => (
+                  <li
+                    key={i}
+                    style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <span>{file}</span>
+                    <button
+                      onClick={() => handleDeleteSingleFile(file)}
+                      className="btn btn-secondary"
+                      disabled={uploading}>
+                      Löschen
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {/* pagination */}
+            {filteredFiles.length > filesPerPage && (
+              <div className="pagination-controls" style={{ marginTop: '10px' }}>
+                <button onClick={handlePrevPage} className="btn btn-light" disabled={currentPage === 1}>
+                  Vorherige
+                </button>
+                <span style={{ margin: '0 10px' }}>
+                  Seite {currentPage} of {totalPages}
+                </span>
+                <button onClick={handleNextPage} className="btn btn-light" disabled={currentPage === totalPages}>
+                  Nächste
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </>
+  )
+}
+
+export default FileUpload

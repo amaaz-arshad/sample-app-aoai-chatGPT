@@ -1608,7 +1608,7 @@ def process_xml_file(
         xml_data: bytes,
         organization: str,
         file_name: str,
-        model  # sentence-transformers model (already created globally in your app)
+        model  # sentence-transformers model
 ):
     """
     Parse XML data from bytes and return a list of documents ready for
@@ -1616,8 +1616,25 @@ def process_xml_file(
     """
     try:
         root = ET.fromstring(xml_data)
-        if root.tag != "folder":
-            root = root.find("folder")  # normalize
+        base_name = os.path.splitext(file_name)[0]
+        
+        # Handle different root types
+        if root.tag == "folder":
+            folder_elem = root
+        elif root.tag == "document":
+            # Create virtual folder for single document
+            folder_elem = ET.Element("folder")
+            folder_elem.append(root)
+        else:
+            # Look for nested folder or create virtual container
+            folder_elem = root.find("folder") 
+            if folder_elem is None:
+                folder_elem = ET.Element("folder")
+                # Collect all document/folder elements
+                for child in root:
+                    if child.tag in ["document", "folder"]:
+                        folder_elem.append(child)
+        
     except ET.ParseError as e:
         raise ValueError(f"Failed to parse XML data: {e}")
 
@@ -1626,11 +1643,16 @@ def process_xml_file(
     # -- depth-first traversal of folders & docs -----------------------------
     def traverse(folder_elem, parent_folder_id=None, parent_folder_name=None):
         fid = folder_elem.attrib.get("id", parent_folder_id)
-        fname = folder_elem.findtext("naam", parent_folder_name).strip()
+        fname = folder_elem.findtext("naam", parent_folder_name or base_name).strip()
 
         # process <document> children
         for doc in folder_elem.findall("document"):
             doc_id = doc.attrib.get("id", "")
+            try:
+                page_num = int(doc_id)
+            except (TypeError, ValueError):
+                page_num = 0
+                
             title = doc.findtext("naam", "").strip() or "(untitled)"
             body_section = doc.find("document/section")
             print(f"\nProcessing document: {doc_id}")
@@ -1645,9 +1667,9 @@ def process_xml_file(
                 docs_array.append({
                     "id": str(uuid.uuid4()),
                     "organization": organization,
-                    "title": f"{fname}: {title} - Part {idx}",
-                    "page": int(doc_id),
-                    "total_pages": int(fid),
+                    "title": f"{title} - Part {idx}",
+                    "page": page_num,
+                    "total_pages": int(fid) if fid and fid.isdigit() else 0,
                     "file": doc_id,
                     "content": content,
                     "keywords": [],
@@ -1658,9 +1680,9 @@ def process_xml_file(
         for sub in folder_elem.findall("folder"):
             traverse(sub, fid, fname)
 
-    traverse(root)
+    traverse(folder_elem, parent_folder_name=base_name)
     return docs_array
-    
+
 
 async def process_single_xml_file(uploaded_file, organization_folder):
     file_name = uploaded_file.filename

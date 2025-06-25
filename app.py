@@ -5,6 +5,7 @@ import logging
 import uuid
 import httpx
 import asyncio
+import requests
 # from azure.ai.documentintelligence import DocumentIntelligenceClient
 from azure.core.credentials import AzureKeyCredential
 from azure.search.documents import SearchClient
@@ -281,8 +282,15 @@ async def prepare_model_args(request_body, request_headers):
     request_messages = request_body.get("messages", [])
     messages = []
 
+    # Extract the bearer token from the Authorization header
+    auth_header = request_headers.get("Authorization")
+    bearer_token = auth_header.split("Bearer ")[1] if auth_header and auth_header.startswith("Bearer ") else None
+    
     # Retrieve the system message from Cosmos DB for the authenticated user
     authenticated_user = get_authenticated_user_details(request_headers)
+    logging.info(f"Authenticated user details: {authenticated_user}")
+    logging.info(f"auth user id token: {authenticated_user['aad_id_token']}")
+    # print(f"authenticated_user: {authenticated_user}")
     user_id = authenticated_user["user_principal_id"]
     system_message = app_settings.azure_openai.system_message  # Fallback value in case no custom message is found
 
@@ -368,13 +376,14 @@ async def prepare_model_args(request_body, request_headers):
             companyName = companyName.strip().lower().strip('.')
             data_source_config["parameters"]["filter"] = f"organization eq '{companyName}'"
 
-        # print("endpoint url: " + request.url_root.rstrip("/") + "/embed")
+        # public_base_url = request.url_root.rstrip("/")
+        # public_base_url = "https://c786-89-27-237-66.ngrok-free.app"
         data_source_config["parameters"]["embedding_dependency"] = {
             "type": "endpoint",
-            "endpoint": app_settings.azure_openai.embedding_endpoint, 
+            "endpoint": app_settings.azure_openai.embedding_endpoint,
             "authentication": {
-              "type": "api_key",
-              "key": app_settings.azure_openai.embedding_key
+                "type": "api_key",
+                "key": f"{authenticated_user['auth_token']}",
             }
         }
         
@@ -1397,6 +1406,7 @@ async def update_system_message():
         logging.exception("Error updating system message")
         return jsonify({"error": str(e)}), 500
 
+
 @bp.route("/api/embed", methods=["POST"])
 async def embed_text():
     try:
@@ -1407,14 +1417,26 @@ async def embed_text():
 
         logging.info("Quart endpoint for text embedding has been called.")
 
+        # 1) Generate the raw embedding
         try:
-            embedding = model.encode(text)
+            vec = model.encode(text)
         except Exception as e:
             logging.exception("Error generating embedding")
             return jsonify({"error": f"Error generating embedding: {str(e)}"}), 500
 
-        # Convert embedding to a list if necessary for JSON serialization
-        embedding_list = embedding.tolist() if hasattr(embedding, "tolist") else embedding
+        # 2) If it's a 2-D array, take the first (and only) row
+        if hasattr(vec, "ndim") and vec.ndim > 1:
+            vec = vec[0]
+
+        # 3) Convert to a list (may still contain numpy types or nested lists)
+        embedding_list = vec.tolist() if hasattr(vec, "tolist") else vec
+
+        # 4) If you still have a nested list (e.g. [[…]]), flatten one level
+        if embedding_list and isinstance(embedding_list[0], list):
+            embedding_list = embedding_list[0]
+
+        # 5) Coerce each element to a built-in Python float
+        embedding_list = [float(x) for x in embedding_list]
 
         response_data = {
             "data": [
@@ -1428,6 +1450,7 @@ async def embed_text():
     except Exception as e:
         logging.exception("Exception in /embed endpoint")
         return jsonify({"error": str(e)}), 500
+    
 
 @bp.route("/get-pdf", methods=["GET"])
 async def get_pdf():

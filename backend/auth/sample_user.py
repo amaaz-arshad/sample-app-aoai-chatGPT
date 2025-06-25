@@ -32,7 +32,7 @@ sample_user = {
   "X-Ms-Client-Principal-Id": "00000000-0000-0000-0000-000000000000",
   "X-Ms-Client-Principal-Idp": "aad",
   "X-Ms-Client-Principal-Name": "testusername@constoso.com",
-  "X-Ms-Token-Aad-Id-Token": "your_aad_id_token",
+  "X-Ms-Token-Aadb2C-Id-Token": "your_aad_id_token",
   "X-Original-Url": "/chatgpt",
   "X-Site-Deployment-Id": "your_app_service",
   "X-Waws-Unencoded-Url": "/chatgpt"

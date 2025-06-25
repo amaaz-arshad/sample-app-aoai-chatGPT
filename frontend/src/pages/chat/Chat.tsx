@@ -40,6 +40,7 @@ import { ChatHistoryPanel } from '../../components/ChatHistory/ChatHistoryPanel'
 import { AppStateContext } from '../../state/AppProvider'
 import { useBoolean } from '@fluentui/react-hooks'
 import { FILTER_FIELD } from '../../constants/variables'
+import { toast } from 'react-toastify'
 
 const enum messageStatus {
   NotRunning = 'Not Running',
@@ -202,6 +203,13 @@ const Chat = () => {
   }
 
   const makeApiRequestWithoutCosmosDB = async (question: ChatMessage['content'], conversationId?: string) => {
+    if (userDetails?.[0]?.id_token && isIdTokenExpired(userDetails[0].id_token)) {
+      toast.error('Session expired, please login again.')
+      setTimeout(() => {
+        window.location.href = '/.auth/logout'
+      }, 2000)
+      return
+    }
     setIsLoading(true)
     setShowLoadingMessage(true)
     const abortController = new AbortController()
@@ -334,7 +342,28 @@ const Chat = () => {
     return abortController.abort()
   }
 
+  const isIdTokenExpired = (token: string): boolean => {
+    try {
+      const [, payload] = token.split('.')
+      const decoded = JSON.parse(atob(payload))
+      const now = Math.floor(Date.now() / 1000)
+      console.log('Decoded token:', decoded)
+      return decoded.exp && decoded.exp < now
+    } catch (e) {
+      console.error('Failed to decode id_token:', e)
+      return true // Treat invalid token as expired
+    }
+  }
+
   const makeApiRequestWithCosmosDB = async (question: ChatMessage['content'], conversationId?: string) => {
+    if (userDetails?.[0]?.id_token && isIdTokenExpired(userDetails[0].id_token)) {
+      toast.error('Sitzung abgelaufen, bitte melden Sie sich erneut an.')
+      setTimeout(() => {
+        window.location.href = '/.auth/logout'
+      }, 2000)
+      return
+    }
+
     setIsLoading(true)
     setShowLoadingMessage(true)
     const abortController = new AbortController()
@@ -374,14 +403,14 @@ const Chat = () => {
         return
       } else {
         conversation.messages.push(userMessage)
-        console.log("organization in request 1:",organization)
+        console.log('organization in request 1:', organization)
         request = {
           messages: [...conversation.messages.filter(answer => answer.role !== ERROR)],
           companyName: organization
         }
       }
     } else {
-      console.log("organization in request 2:",organization)
+      console.log('organization in request 2:', organization)
       request = {
         messages: [userMessage].filter(answer => answer.role !== ERROR),
         companyName: organization

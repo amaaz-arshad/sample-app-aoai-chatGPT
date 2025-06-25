@@ -1,0 +1,31 @@
+@bp.route("/api/embed", methods=["POST"])
+async def embed_text():
+    try:
+        request_json = await request.get_json()
+        text = request_json.get("input", "")
+        if not text:
+            return jsonify({"error": "Error: 'input' field is empty."}), 400
+
+        logging.info("Quart endpoint for text embedding has been called.")
+
+        try:
+            embedding = model.encode(text)
+        except Exception as e:
+            logging.exception("Error generating embedding")
+            return jsonify({"error": f"Error generating embedding: {str(e)}"}), 500
+
+        # Convert embedding to a list if necessary for JSON serialization
+        embedding_list = embedding.tolist() if hasattr(embedding, "tolist") else embedding
+
+        response_data = {
+            "data": [
+                {
+                    "embedding": embedding_list
+                }
+            ]
+        }
+        return jsonify(response_data), 200
+
+    except Exception as e:
+        logging.exception("Exception in /embed endpoint")
+        return jsonify({"error": str(e)}), 500

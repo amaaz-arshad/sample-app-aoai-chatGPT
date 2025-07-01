@@ -106,7 +106,7 @@ bp = Blueprint("routes", __name__, static_folder="static", template_folder="stat
 
 cosmos_db_ready = asyncio.Event()
 
-MAX_WORKERS = int(os.getenv("THREAD_POOL_MAX_WORKERS", "4"))
+MAX_WORKERS = int(os.getenv("THREAD_POOL_MAX_WORKERS", "3"))
 
 # Initialize a thread pool for CPU-bound tasks
 executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
@@ -1119,24 +1119,47 @@ async def process_single_file(uploaded_file, organization):
         )
         
         docs_array = []
-        for p in page_data:
-            # Process embeddings in thread pool
-            print(f"Generating embeddings for page {p['page_number']} of {file_name}")
-            vector = await loop.run_in_executor(
+        
+        # Modify the embedding generation part:
+        batch_size = MAX_WORKERS  # Adjust based on your memory constraints
+        for i in range(0, len(page_data), batch_size):
+            batch = page_data[i:i+batch_size]
+            texts = [p["markdown"] for p in batch]
+            vectors = await loop.run_in_executor(
                 executor,
-                lambda c=p["markdown"]: model.encode(c).tolist()
+                lambda: model.encode(texts).tolist()
             )
-            docs_array.append({
-                "id": str(uuid.uuid4()),
-                "organization": organization,
-                "title": f"Page {p['page_number']}",
-                "page": p["page_number"],
-                "total_pages": p["total_pages"],
-                "file": file_name,
-                "content": p["markdown"],
-                "contentVector": vector,
-                "keywords": []
-            })
+            for j, p in enumerate(batch):
+                docs_array.append({
+                    "id": str(uuid.uuid4()),
+                    "organization": organization,
+                    "title": f"Page {p['page_number']}",
+                    "page": p["page_number"],
+                    "total_pages": p["total_pages"],
+                    "file": file_name,
+                    "content": p["markdown"],
+                    "contentVector": vectors[j],
+                    "keywords": []
+                })
+        
+        # for p in page_data:
+        #     # Process embeddings in thread pool
+        #     print(f"Generating embeddings for page {p['page_number']} of {file_name}")
+        #     vector = await loop.run_in_executor(
+        #         executor,
+        #         lambda c=p["markdown"]: model.encode(c).tolist()
+        #     )
+        #     docs_array.append({
+        #         "id": str(uuid.uuid4()),
+        #         "organization": organization,
+        #         "title": f"Page {p['page_number']}",
+        #         "page": p["page_number"],
+        #         "total_pages": p["total_pages"],
+        #         "file": file_name,
+        #         "content": p["markdown"],
+        #         "contentVector": vector,
+        #         "keywords": []
+        #     })
         
         # Upload in batches of 5 pages
         for i in range(0, len(docs_array), 5):

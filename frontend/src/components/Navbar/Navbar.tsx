@@ -45,14 +45,14 @@ export default function Navbar() {
               to="/">
               Chatbot
             </NavLink>
-            {organization !== 'vjoon k4' && (
+            {userType !== 'read-only' && (
               <NavLink
                 className={({ isActive }) => (isActive ? 'nav-link active fw-bold me-2' : 'nav-link fw-bold me-2')}
                 to="/upload-files">
                 Dateien hochladen
               </NavLink>
             )}
-            {(!userType || userType != 'user') && (
+            {(!userType || userType == 'admin') && (
               <>
                 <NavLink
                   className={({ isActive }) => (isActive ? 'nav-link active fw-bold me-2' : 'nav-link fw-bold me-2')}

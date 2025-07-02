@@ -7,6 +7,7 @@ import Navbar from '../../components/Navbar/Navbar'
 import { getUserInfo, UserInfo } from '../../api'
 import { FILTER_FIELD } from '../../constants/variables'
 import './FileUpload.css'
+import { useAppUser } from '../../state/AppUserProvider'
 
 interface FileUploadResponse {
   files: string[]
@@ -15,7 +16,7 @@ interface FileUploadResponse {
 const FileUpload: React.FC = () => {
   const appStateContext = useContext(AppStateContext)
   const AUTH_ENABLED = appStateContext?.state.frontendSettings?.auth_enabled
-
+  const { userInfo, authEnabled } = useAppUser()
   /* ------------------------------------------------------------------ */
   /*  state                                                             */
   /* ------------------------------------------------------------------ */
@@ -24,7 +25,7 @@ const FileUpload: React.FC = () => {
   const [uploading, setUploading] = useState<boolean>(false)
   const [organizationFilter, setOrganizationFilter] = useState<string>('all')
   const [showAuthMessage, setShowAuthMessage] = useState<boolean | undefined>()
-  const [userDetails, setUserDetails] = useState<UserInfo[]>([])
+  // const [userDetails, setUserDetails] = useState<UserInfo[]>([])
   const [currentPage, setCurrentPage] = useState<number>(1)
   const filesPerPage = 10
 
@@ -32,29 +33,23 @@ const FileUpload: React.FC = () => {
   /*  auth helper                                                       */
   /* ------------------------------------------------------------------ */
   useEffect(() => {
-    if (AUTH_ENABLED !== undefined) getUserInfoList()
-  }, [AUTH_ENABLED])
-
-  const getUserInfoList = async () => {
     if (!AUTH_ENABLED) {
       setShowAuthMessage(false)
       return
     }
-    const userInfoList = await getUserInfo()
-    setUserDetails(userInfoList)
-    if (userInfoList.length === 0 && window.location.hostname !== '127.0.0.1') {
+    if (userInfo?.length === 0 && window.location.hostname !== '127.0.0.1') {
       setShowAuthMessage(true)
     } else {
       setShowAuthMessage(false)
     }
-  }
+  }, [AUTH_ENABLED, userInfo])
 
   /* ------------------------------------------------------------------ */
   /*  company / organisation helpers                                    */
   /* ------------------------------------------------------------------ */
   const getCompanyName = () => {
-    if (userDetails?.[0]?.user_claims) {
-      const claim = userDetails[0].user_claims.find(c => c.typ === FILTER_FIELD)
+    if (userInfo?.[0]?.user_claims) {
+      const claim = userInfo[0].user_claims.find(c => c.typ === FILTER_FIELD)
       return claim
         ? claim.val
             .trim()
@@ -286,7 +281,6 @@ const FileUpload: React.FC = () => {
               className="file-input"
               disabled={uploading}
             />
-
             {/* PDF button */}
             <button
               onClick={handleUploadPdf}

@@ -377,7 +377,6 @@ async def prepare_model_args(request_body, request_headers):
             data_source_config["parameters"]["filter"] = f"organization eq '{companyName}'"
 
         # public_base_url = request.url_root.rstrip("/")
-        # public_base_url = "https://c786-89-27-237-66.ngrok-free.app"
         data_source_config["parameters"]["embedding_dependency"] = {
             "type": "endpoint",
             "endpoint": app_settings.azure_openai.embedding_endpoint,

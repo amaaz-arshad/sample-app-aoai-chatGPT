@@ -21,6 +21,7 @@ import { useBoolean } from '@fluentui/react-hooks'
 
 import { ChatHistoryLoadingState, historyDeleteAll } from '../../api'
 import { AppStateContext } from '../../state/AppProvider'
+import { useLanguage } from '../../state/LanguageContext'
 
 import ChatHistoryList from './ChatHistoryList'
 
@@ -45,6 +46,7 @@ const commandBarButtonStyle: Partial<IStackStyles> = { root: { height: '50px' } 
 
 export function ChatHistoryPanel(_props: ChatHistoryPanelProps) {
   const appStateContext = useContext(AppStateContext)
+  const { t } = useLanguage()
   const [showContextualMenu, setShowContextualMenu] = React.useState(false)
   const [hideClearAllDialog, { toggle: toggleClearAllDialog }] = useBoolean(true)
   const [clearing, setClearing] = React.useState(false)
@@ -52,11 +54,9 @@ export function ChatHistoryPanel(_props: ChatHistoryPanelProps) {
 
   const clearAllDialogContentProps = {
     type: DialogType.close,
-    title: !clearingError ? 'Möchten Sie den gesamten Chatverlauf wirklich löschen?' : 'Fehler beim Löschen des gesamten Chatverlaufs',
-    closeButtonAriaLabel: 'Close',
-    subText: !clearingError
-      ? 'Der gesamte Chatverlauf wird dauerhaft gelöscht.'
-      : 'Bitte versuchen Sie es erneut. Wenn das Problem weiterhin besteht, wenden Sie sich bitte an den Site-Administrator.'
+    title: !clearingError ? t('chatHistory.clearAllDialog.title') : t('chatHistory.clearAllDialog.errorTitle'),
+    closeButtonAriaLabel: t('close'),
+    subText: !clearingError ? t('chatHistory.clearAllDialog.subText') : t('chatHistory.clearAllDialog.errorSubText')
   }
 
   const modalProps = {
@@ -67,7 +67,11 @@ export function ChatHistoryPanel(_props: ChatHistoryPanelProps) {
   }
 
   const menuItems: IContextualMenuItem[] = [
-    { key: 'clearAll', text: 'Gesamten Chatverlauf löschen', iconProps: { iconName: 'delete' } }
+    {
+      key: 'clearAll',
+      text: t('chatHistory.clearAll'),
+      iconProps: { iconName: 'delete' }
+    }
   ]
 
   const handleHistoryClick = () => {
@@ -103,8 +107,13 @@ export function ChatHistoryPanel(_props: ChatHistoryPanelProps) {
   React.useEffect(() => {}, [appStateContext?.state.chatHistory, clearingError])
 
   return (
-    <section className={styles.container} data-is-scrollable aria-label={'chat history panel'}>
-      <Stack horizontal horizontalAlign="space-between" verticalAlign="center" wrap aria-label="chat history header">
+    <section className={styles.container} data-is-scrollable aria-label={t('chatHistory.panelAriaLabel')}>
+      <Stack
+        horizontal
+        horizontalAlign="space-between"
+        verticalAlign="center"
+        wrap
+        aria-label={t('chatHistory.headerAriaLabel')}>
         <StackItem>
           <Text
             role="heading"
@@ -116,16 +125,16 @@ export function ChatHistoryPanel(_props: ChatHistoryPanelProps) {
               marginRight: 'auto',
               paddingLeft: '20px'
             }}>
-            Chat-Verlauf
+            {t('chatHistory.title')}
           </Text>
         </StackItem>
         <Stack verticalAlign="start">
           <Stack horizontal styles={commandBarButtonStyle}>
             <CommandBarButton
               iconProps={{ iconName: 'More' }}
-              title={'Gesamten Chatverlauf löschen'}
+              title={t('chatHistory.clearAll')}
               onClick={onShowContextualMenu}
-              aria-label={'Gesamten Chatverlauf löschen'}
+              aria-label={t('chatHistory.clearAll')}
               styles={commandBarStyle}
               role="button"
               id="moreButton"
@@ -139,9 +148,9 @@ export function ChatHistoryPanel(_props: ChatHistoryPanelProps) {
             />
             <CommandBarButton
               iconProps={{ iconName: 'cancel' }}
-              title={'Verstecken'}
+              title={t('hide')}
               onClick={handleHistoryClick}
-              aria-label={'hide button'}
+              aria-label={t('hide')}
               styles={commandBarStyle}
               role="button"
             />
@@ -149,7 +158,7 @@ export function ChatHistoryPanel(_props: ChatHistoryPanelProps) {
         </Stack>
       </Stack>
       <Stack
-        aria-label="chat history panel content"
+        aria-label={t('chatHistory.contentAriaLabel')}
         styles={{
           root: {
             display: 'flex',
@@ -179,12 +188,14 @@ export function ChatHistoryPanel(_props: ChatHistoryPanelProps) {
                         {appStateContext?.state.isCosmosDBAvailable?.status && (
                           <span>{appStateContext?.state.isCosmosDBAvailable?.status}</span>
                         )}
-                        {!appStateContext?.state.isCosmosDBAvailable?.status && <span>Error loading chat history</span>}
+                        {!appStateContext?.state.isCosmosDBAvailable?.status && (
+                          <span>{t('chatHistory.loadingError')}</span>
+                        )}
                       </Text>
                     </StackItem>
                     <StackItem>
                       <Text style={{ alignSelf: 'center', fontWeight: '400', fontSize: 14 }}>
-                        <span>Chat history can't be saved at this time</span>
+                        <span>{t('chatHistory.savingDisabled')}</span>
                       </Text>
                     </StackItem>
                   </Stack>
@@ -203,11 +214,12 @@ export function ChatHistoryPanel(_props: ChatHistoryPanelProps) {
                     <Spinner
                       style={{ alignSelf: 'flex-start', height: '100%', marginRight: '5px' }}
                       size={SpinnerSize.medium}
+                      aria-label={t('chatHistory.loadingAriaLabel1')}
                     />
                   </StackItem>
                   <StackItem>
                     <Text style={{ alignSelf: 'center', fontWeight: '400', fontSize: 14 }}>
-                      <span style={{ whiteSpace: 'pre-wrap' }}>Loading chat history</span>
+                      <span style={{ whiteSpace: 'pre-wrap' }}>{t('chatHistory.loading')}</span>
                     </Text>
                   </StackItem>
                 </Stack>
@@ -222,11 +234,13 @@ export function ChatHistoryPanel(_props: ChatHistoryPanelProps) {
         dialogContentProps={clearAllDialogContentProps}
         modalProps={modalProps}>
         <DialogFooter>
-          {!clearingError && <PrimaryButton onClick={onClearAllChatHistory} disabled={clearing} text="Alles löschen" />}
+          {!clearingError && (
+            <PrimaryButton onClick={onClearAllChatHistory} disabled={clearing} text={t('chatHistory.clearAllButton')} />
+          )}
           <DefaultButton
             onClick={onHideClearAllDialog}
             disabled={clearing}
-            text={!clearingError ? 'Stornieren' : 'Schließen'}
+            text={!clearingError ? t('cancel') : t('close')}
           />
         </DialogFooter>
       </Dialog>

@@ -1,10 +1,9 @@
 import React, { useContext } from 'react'
 import { Stack, StackItem, Text } from '@fluentui/react'
-
 import { Conversation } from '../../api/models'
 import { AppStateContext } from '../../state/AppProvider'
-
 import { ChatHistoryListItemGroups } from './ChatHistoryListItem'
+import { useLanguage } from '../../state/LanguageContext'
 
 interface ChatHistoryListProps {}
 
@@ -14,7 +13,8 @@ export interface GroupedChatHistory {
 }
 
 const groupByMonth = (entries: Conversation[]) => {
-  const groups: GroupedChatHistory[] = [{ month: 'Jüngste', entries: [] }]
+  const { t } = useLanguage()
+  const groups: GroupedChatHistory[] = [{ month: t('chatHistory.recent'), entries: [] }]
   const currentDate = new Date()
 
   entries.forEach(entry => {
@@ -61,6 +61,7 @@ const groupByMonth = (entries: Conversation[]) => {
 
 const ChatHistoryList: React.FC<ChatHistoryListProps> = () => {
   const appStateContext = useContext(AppStateContext)
+  const { t } = useLanguage()
   const chatHistory = appStateContext?.state.chatHistory
 
   React.useEffect(() => {}, [appStateContext?.state.chatHistory])
@@ -73,7 +74,7 @@ const ChatHistoryList: React.FC<ChatHistoryListProps> = () => {
       <Stack horizontal horizontalAlign="center" verticalAlign="center" style={{ width: '100%', marginTop: 10 }}>
         <StackItem>
           <Text style={{ alignSelf: 'center', fontWeight: '400', fontSize: 14 }}>
-            <span>Kein Chatverlauf.</span>
+            <span>{t('chatHistory.empty')}</span>
           </Text>
         </StackItem>
       </Stack>

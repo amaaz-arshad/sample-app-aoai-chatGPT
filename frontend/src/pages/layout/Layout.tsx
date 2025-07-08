@@ -10,27 +10,26 @@ import { AppStateContext } from '../../state/AppProvider'
 
 import styles from './Layout.module.css'
 import Navbar from '../../components/Navbar/Navbar'
+import { useLanguage } from '../../state/LanguageContext'
 
 const Layout = () => {
   const [isSharePanelOpen, setIsSharePanelOpen] = useState<boolean>(false)
   const [copyClicked, setCopyClicked] = useState<boolean>(false)
-  const [copyText, setCopyText] = useState<string>('Copy URL')
-  const [shareLabel, setShareLabel] = useState<string | undefined>('Abmelden')
-  const [hideHistoryLabel, setHideHistoryLabel] = useState<string>('Chat-Verlauf verbergen')
-  const [showHistoryLabel, setShowHistoryLabel] = useState<string>('Chat-Verlauf anzeigen')
+  const { t } = useLanguage()
+  const [shareLabel, setShareLabel] = useState<string | undefined>(t('layout.logout'))
+  const [hideHistoryLabel, setHideHistoryLabel] = useState<string>(t('layout.hideChatHistory'))
+  const [showHistoryLabel, setShowHistoryLabel] = useState<string>(t('layout.showChatHistory'))
   const [logo, setLogo] = useState('')
   const appStateContext = useContext(AppStateContext)
   const ui = appStateContext?.state.frontendSettings?.ui
 
   const handleShareClick = () => {
-    // setIsSharePanelOpen(true)
     window.location.href = `/.auth/logout`
   }
 
   const handleSharePanelDismiss = () => {
     setIsSharePanelOpen(false)
     setCopyClicked(false)
-    setCopyText('Copy URL')
   }
 
   const handleCopyClick = () => {
@@ -48,24 +47,18 @@ const Layout = () => {
     }
   }, [appStateContext?.state.isLoading])
 
-  useEffect(() => {
-    if (copyClicked) {
-      setCopyText('Copied URL')
-    }
-  }, [copyClicked])
-
   useEffect(() => {}, [appStateContext?.state.isCosmosDBAvailable.status])
 
   useEffect(() => {
     const handleResize = () => {
       if (window.innerWidth < 480) {
         setShareLabel(undefined)
-        setHideHistoryLabel('Verlauf verbergen')
-        setShowHistoryLabel('Verlauf anzeigen')
+        setHideHistoryLabel(t('layout.hideHistoryShort'))
+        setShowHistoryLabel(t('layout.showHistoryShort'))
       } else {
-        setShareLabel('Abmelden')
-        setHideHistoryLabel('Chat-Verlauf verbergen')
-        setShowHistoryLabel('Chat-Verlauf anzeigen')
+        setShareLabel(t('layout.logout'))
+        setHideHistoryLabel(t('layout.hideChatHistory'))
+        setShowHistoryLabel(t('layout.showChatHistory'))
       }
     }
 
@@ -73,7 +66,7 @@ const Layout = () => {
     handleResize()
 
     return () => window.removeEventListener('resize', handleResize)
-  }, [])
+  }, [t])
 
   return (
     <>
@@ -120,7 +113,7 @@ const Layout = () => {
             ]
           }}
           dialogContentProps={{
-            title: 'Share the web app',
+            title: t('layout.shareDialogTitle'),
             showCloseButton: true
           }}>
           <Stack horizontal verticalAlign="center" style={{ gap: '8px' }}>
@@ -129,11 +122,11 @@ const Layout = () => {
               className={styles.copyButtonContainer}
               role="button"
               tabIndex={0}
-              aria-label="Copy"
+              aria-label={t('layout.copy')}
               onClick={handleCopyClick}
               onKeyDown={e => (e.key === 'Enter' || e.key === ' ' ? handleCopyClick() : null)}>
               <CopyRegular className={styles.copyButton} />
-              <span className={styles.copyButtonText}>{copyText}</span>
+              <span className={styles.copyButtonText}>{copyClicked ? t('layout.copied') : t('layout.copy')}</span>
             </div>
           </Stack>
         </Dialog>

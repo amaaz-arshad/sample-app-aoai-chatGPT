@@ -15,6 +15,7 @@ import { AppStateContext } from '../../state/AppProvider'
 import { parseAnswer } from './AnswerParser'
 
 import styles from './Answer.module.css'
+import { useLanguage } from '../../state/LanguageContext'
 
 interface Props {
   answer: AskResponse
@@ -24,6 +25,7 @@ interface Props {
 }
 
 export const Answer = ({ answer, onCitationClicked, onExectResultClicked, sendFollowupQuestion }: Props) => {
+  const { t } = useLanguage()
   const initializeAnswerFeedback = (answer: AskResponse) => {
     if (answer.message_id == undefined) return undefined
     if (answer.feedback == undefined) return undefined
@@ -36,7 +38,6 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, sendFo
   const filePathTruncationLimit = 50
 
   const parsedAnswer = useMemo(() => parseAnswer(answer), [answer])
-  // console.log("answer:", answer)
   const answerOnly = parsedAnswer?.markdownFormatText?.includes('Anschlussfragen:')
     ? parsedAnswer.markdownFormatText.split('Anschlussfragen:')[0]
     : parsedAnswer?.markdownFormatText
@@ -91,7 +92,7 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, sendFo
       // citationFilename = `${citation.filepath} - Part ${citation.reindex_id}`
       citationFilename = `${citation.filepath} - ${citation.title}`
     } else {
-      citationFilename = `Citation ${index}`
+      citationFilename = t('answer.citationLabel', { index: index + 1 })
     }
     return citationFilename
   }
@@ -152,7 +153,7 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, sendFo
     } else if (citation.title && citation.reindex_id) {
       citationTitle = citation.reindex_id == '1' ? citation.title : `${citation.title} - Part ${citation.reindex_id}`
     } else {
-      citationTitle = `Citation ${index}`
+      citationTitle = t('answer.citationLabel', { index: index + 1 })
     }
     return citationTitle
   }
@@ -226,36 +227,36 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, sendFo
   const UnhelpfulFeedbackContent = () => {
     return (
       <>
-        <div>Warum war diese Antwort nicht hilfreich?</div>
+        <div>{t('feedback.unhelpfulPrompt')}</div>
         <Stack tokens={{ childrenGap: 4 }}>
           <Checkbox
-            label="Zitate fehlen"
+            label={t('feedback.missingCitation')}
             id={Feedback.MissingCitation}
             defaultChecked={negativeFeedbackList.includes(Feedback.MissingCitation)}
             onChange={updateFeedbackList}></Checkbox>
           <Checkbox
-            label="Zitate sind unzutreffend"
+            label={t('feedback.wrongCitation')}
             id={Feedback.WrongCitation}
             defaultChecked={negativeFeedbackList.includes(Feedback.WrongCitation)}
             onChange={updateFeedbackList}></Checkbox>
           <Checkbox
-            label="Die Antwort basiert nicht auf meinen Daten"
+            label={t('feedback.outOfScope')}
             id={Feedback.OutOfScope}
             defaultChecked={negativeFeedbackList.includes(Feedback.OutOfScope)}
             onChange={updateFeedbackList}></Checkbox>
           <Checkbox
-            label="Ungenau oder nicht relevant"
+            label={t('feedback.inaccurateOrIrrelevant')}
             id={Feedback.InaccurateOrIrrelevant}
             defaultChecked={negativeFeedbackList.includes(Feedback.InaccurateOrIrrelevant)}
             onChange={updateFeedbackList}></Checkbox>
           <Checkbox
-            label="Sonstiges"
+            label={t('feedback.otherUnhelpful')}
             id={Feedback.OtherUnhelpful}
             defaultChecked={negativeFeedbackList.includes(Feedback.OtherUnhelpful)}
             onChange={updateFeedbackList}></Checkbox>
         </Stack>
         <div onClick={() => setShowReportInappropriateFeedback(true)} style={{ color: '#115EA3', cursor: 'pointer' }}>
-          Unangemessenen Inhalt melden
+          {t('feedback.reportInappropriate')}
         </div>
       </>
     )
@@ -265,31 +266,31 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, sendFo
     return (
       <>
         <div>
-          Der Inhalt ist <span style={{ color: 'red' }}>*</span>
+          {t('feedback.contentIs')} <span style={{ color: 'red' }}>*</span>
         </div>
         <Stack tokens={{ childrenGap: 4 }}>
           <Checkbox
-            label="Hassreden, Stereotypisierung, Erniedrigung"
+            label={t('feedback.hateSpeech')}
             id={Feedback.HateSpeech}
             defaultChecked={negativeFeedbackList.includes(Feedback.HateSpeech)}
             onChange={updateFeedbackList}></Checkbox>
           <Checkbox
-            label="Gewalttätig: Verherrlichung von Gewalt, Selbstverletzung"
+            label={t('feedback.violent')}
             id={Feedback.Violent}
             defaultChecked={negativeFeedbackList.includes(Feedback.Violent)}
             onChange={updateFeedbackList}></Checkbox>
           <Checkbox
-            label="Sexuell: explizite Inhalte, Grooming"
+            label={t('feedback.sexual')}
             id={Feedback.Sexual}
             defaultChecked={negativeFeedbackList.includes(Feedback.Sexual)}
             onChange={updateFeedbackList}></Checkbox>
           <Checkbox
-            label="Manipulativ: hinterhältig, emotional, aufdringlich, tyrannisch"
+            label={t('feedback.manipulative')}
             defaultChecked={negativeFeedbackList.includes(Feedback.Manipulative)}
             id={Feedback.Manipulative}
             onChange={updateFeedbackList}></Checkbox>
           <Checkbox
-            label="Andere"
+            label={t('feedback.otherHarmful')}
             id={Feedback.OtherHarmful}
             defaultChecked={negativeFeedbackList.includes(Feedback.OtherHarmful)}
             onChange={updateFeedbackList}></Checkbox>
@@ -353,7 +354,7 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, sendFo
                 <Stack horizontal horizontalAlign="space-between">
                   <ThumbLike20Filled
                     aria-hidden="false"
-                    aria-label="Like this response"
+                    aria-label={t('feedback.likeLabel')}
                     onClick={() => onLikeResponseClicked()}
                     style={
                       feedbackState === Feedback.Positive ||
@@ -364,7 +365,7 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, sendFo
                   />
                   <ThumbDislike20Filled
                     aria-hidden="false"
-                    aria-label="Dislike this response"
+                    aria-label={t('feedback.dislikeLabel')}
                     onClick={() => onDislikeResponseClicked()}
                     style={
                       feedbackState !== Feedback.Positive &&
@@ -394,11 +395,13 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, sendFo
                   <Text
                     className={styles.accordionTitle}
                     onClick={toggleIsRefAccordionOpen}
-                    aria-label="Open references"
+                    aria-label={t('answer.openReferences')}
                     tabIndex={0}
                     role="button">
                     <span>
-                      {parsedAnswer.citations.length > 1 ? parsedAnswer.citations.length + ' Quellen' : '1 Quelle'}
+                      {parsedAnswer.citations.length > 1
+                        ? t('answer.multipleSources', { count: parsedAnswer.citations.length })
+                        : t('answer.singleSource')}
                     </span>
                   </Text>
                   <FontIcon
@@ -411,7 +414,7 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, sendFo
             </Stack.Item>
           )}
           <Stack.Item className={styles.answerDisclaimerContainer}>
-            <span className={styles.answerDisclaimer}>AI-generierter Inhalt kann fehlerhaft sein</span>
+            <span className={styles.answerDisclaimer}>{t('answer.disclaimer')}</span>
           </Stack.Item>
           {!!answer.exec_results?.length && (
             <Stack.Item onKeyDown={e => (e.key === 'Enter' || e.key === ' ' ? toggleIsRefAccordionOpen() : null)}>
@@ -420,10 +423,10 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, sendFo
                   <Text
                     className={styles.accordionTitle}
                     onClick={() => onExectResultClicked(answer.message_id ?? '')}
-                    aria-label="Open Intents"
+                    aria-label={t('answer.openIntents')}
                     tabIndex={0}
                     role="button">
-                    <span>Show Intents</span>
+                    <span>{t('answer.showIntents')}</span>
                   </Text>
                   <FontIcon className={styles.accordionIcon} onClick={handleChevronClick} iconName={'ChevronRight'} />
                 </Stack>
@@ -506,18 +509,18 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, sendFo
           ]
         }}
         dialogContentProps={{
-          title: 'Feedback senden',
+          title: t('feedback.sendFeedback'),
           showCloseButton: true
         }}>
         <Stack tokens={{ childrenGap: 4 }}>
-          <div>Ihr Feedback hilft uns, die Qualität der Antworten gezielt zu verbessern.</div>
+          <div>{t('feedback.helpImprove')}</div>
 
           {!showReportInappropriateFeedback ? <UnhelpfulFeedbackContent /> : <ReportInappropriateFeedbackContent />}
 
-          <div>Durch Klicken auf „Senden“ wird Ihr Feedback an das verantwortliche Team übermittelt.</div>
+          <div>{t('feedback.submitNotice')}</div>
 
           <DefaultButton disabled={negativeFeedbackList.length < 1} onClick={onSubmitNegativeFeedback}>
-            Senden
+            {t('feedback.submit')}
           </DefaultButton>
         </Stack>
       </Dialog>

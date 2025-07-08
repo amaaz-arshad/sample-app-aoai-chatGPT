@@ -4,9 +4,11 @@ import SnapLogo from '../../assets/Snap.svg'
 import './Navbar.css'
 import { useAppUser } from '../../state/AppUserProvider'
 import { FILTER_FIELD, FILTER_FIELD2 } from '../../constants/variables'
+import { useLanguage } from '../../state/LanguageContext'
 
 export default function Navbar() {
   const { userInfo, authEnabled } = useAppUser()
+  const { t, language, setLanguage } = useLanguage()
   const [userType, setUserType] = useState<string>('')
   const [organization, setOrganization] = useState<string>('')
 
@@ -35,7 +37,7 @@ export default function Navbar() {
           data-bs-target="#navbarNavAltMarkup"
           aria-controls="navbarNavAltMarkup"
           aria-expanded="false"
-          aria-label="Toggle navigation">
+          aria-label={t('navbar.toggleMenu')}>
           <span className="navbar-toggler-icon"></span>
         </button>
         <div className="collapse navbar-collapse" id="navbarNavAltMarkup">
@@ -43,13 +45,13 @@ export default function Navbar() {
             <NavLink
               className={({ isActive }) => (isActive ? 'nav-link active fw-bold me-2' : 'nav-link fw-bold me-2')}
               to="/">
-              Chatbot
+              {t('navbar.chatbot')}
             </NavLink>
             {userType !== 'read-only' && (
               <NavLink
                 className={({ isActive }) => (isActive ? 'nav-link active fw-bold me-2' : 'nav-link fw-bold me-2')}
                 to="/upload-files">
-                Dateien hochladen
+                {t('navbar.uploadFiles')}
               </NavLink>
             )}
             {(!userType || userType == 'admin') && (
@@ -57,20 +59,36 @@ export default function Navbar() {
                 <NavLink
                   className={({ isActive }) => (isActive ? 'nav-link active fw-bold me-2' : 'nav-link fw-bold me-2')}
                   to="/history">
-                  Verlauf
+                  {t('navbar.history')}
                 </NavLink>
                 <NavLink
                   className={({ isActive }) => (isActive ? 'nav-link active fw-bold me-2' : 'nav-link fw-bold me-2')}
                   to="/system-message">
-                  Systemnachricht
+                  {t('navbar.systemMessage')}
                 </NavLink>
               </>
             )}
             {/* Logout button */}
             <button className="nav-link fw-bold" onClick={() => (window.location.href = '/.auth/logout')}>
-              Logout
+              {t('navbar.logout')}
             </button>
           </div>
+        </div>
+
+        {/* Language Switcher */}
+        <div className="d-flex ms-3">
+          <button
+            className={`btn btn-sm ${language === 'en' ? 'btn-light' : 'btn-outline-light'}`}
+            onClick={() => setLanguage('en')}
+            aria-label={t('navbar.switchToEnglish')}>
+            EN
+          </button>
+          <button
+            className={`btn btn-sm ${language === 'de' ? 'btn-light' : 'btn-outline-light'} ms-1`}
+            onClick={() => setLanguage('de')}
+            aria-label={t('navbar.switchToGerman')}>
+            DE
+          </button>
         </div>
       </div>
     </nav>

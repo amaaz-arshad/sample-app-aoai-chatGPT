@@ -41,6 +41,7 @@ import { AppStateContext } from '../../state/AppProvider'
 import { useBoolean } from '@fluentui/react-hooks'
 import { FILTER_FIELD } from '../../constants/variables'
 import { toast } from 'react-toastify'
+import { useLanguage } from '../../state/LanguageContext'
 
 const enum messageStatus {
   NotRunning = 'Not Running',
@@ -70,11 +71,12 @@ const Chat = () => {
   const [answerId, setAnswerId] = useState<string>('')
   const [userDetails, setUserDetails] = useState<UserInfo[]>([])
   const [organization, setOrganization] = useState('')
+  const { t } = useLanguage()
 
   const errorDialogContentProps = {
     type: DialogType.close,
     title: errorMsg?.title,
-    closeButtonAriaLabel: 'Close',
+    closeButtonAriaLabel: t('chat.close'),
     subText: errorMsg?.subtitle
   }
 
@@ -95,9 +97,9 @@ const Chat = () => {
       appStateContext?.state.chatHistoryLoadingState === ChatHistoryLoadingState.Fail &&
       hideErrorDialog
     ) {
-      let subtitle = `${appStateContext.state.isCosmosDBAvailable.status}. Please contact the site administrator.`
+      let subtitle = `${appStateContext.state.isCosmosDBAvailable.status}. ${t('chat.contactAdmin')}`
       setErrorMsg({
-        title: 'Chat history is not enabled',
+        title: t('chat.historyDisabled'),
         subtitle: subtitle
       })
       toggleErrorDialog()
@@ -204,7 +206,7 @@ const Chat = () => {
 
   const makeApiRequestWithoutCosmosDB = async (question: ChatMessage['content'], conversationId?: string) => {
     if (userDetails?.[0]?.id_token && isIdTokenExpired(userDetails[0].id_token)) {
-      toast.error('Session expired, please login again.')
+      toast.error(t('chat.sessionExpired'))
       setTimeout(() => {
         window.location.href = '/.auth/logout'
       }, 2000)
@@ -310,8 +312,7 @@ const Chat = () => {
       }
     } catch (e) {
       if (!abortController.signal.aborted) {
-        let errorMessage =
-          'An error occurred. Please try again. If the problem persists, please contact the site administrator.'
+        let errorMessage = t('chat.defaultError')
         if (result.error?.message) {
           errorMessage = result.error.message
         } else if (typeof result.error === 'string') {
@@ -357,7 +358,7 @@ const Chat = () => {
 
   const makeApiRequestWithCosmosDB = async (question: ChatMessage['content'], conversationId?: string) => {
     if (userDetails?.[0]?.id_token && isIdTokenExpired(userDetails[0].id_token)) {
-      toast.error('Sitzung abgelaufen, bitte melden Sie sich erneut an.')
+      toast.error(t('chat.sessionExpired'))
       setTimeout(() => {
         window.location.href = '/.auth/logout'
       }, 2000)
@@ -384,13 +385,6 @@ const Chat = () => {
       date: new Date().toISOString()
     }
 
-    // const companyClaim =
-    //   Array.isArray(userDetails) && userDetails.length > 0 && Array.isArray(userDetails[0].user_claims)
-    //     ? userDetails[0].user_claims.find(claim => claim.typ === FILTER_FIELD)
-    //     : null
-    // const companyName = companyClaim && companyClaim.val ? companyClaim.val : null
-    // console.log(userDetails)
-    // console.log('companyname:', companyName)
     let request: ConversationRequest
     let conversation
     if (conversationId) {
@@ -418,7 +412,7 @@ const Chat = () => {
       setMessages(request.messages)
     }
     let result = {} as ChatResponse
-    var errorResponseMessage = 'Please try again. If the problem persists, please contact the site administrator.'
+    var errorResponseMessage = t('chat.defaultError')
     try {
       const response = conversationId
         ? await historyGenerate(request, abortController.signal, conversationId)
@@ -430,7 +424,7 @@ const Chat = () => {
         let errorChatMsg: ChatMessage = {
           id: uuid(),
           role: ERROR,
-          content: `There was an error generating a response. Chat history can't be saved at this time. ${errorResponseMessage}`,
+          content: t('chat.historyError', { error: errorResponseMessage }),
           date: new Date().toISOString()
         }
         let resultConversation
@@ -539,7 +533,7 @@ const Chat = () => {
       }
     } catch (e) {
       if (!abortController.signal.aborted) {
-        let errorMessage = `An error occurred. ${errorResponseMessage}`
+        let errorMessage = t('chat.apiError', { error: errorResponseMessage })
         if (result.error?.message) {
           errorMessage = result.error.message
         } else if (typeof result.error === 'string') {
@@ -614,8 +608,8 @@ const Chat = () => {
       let response = await historyClear(appStateContext?.state.currentChat.id)
       if (!response.ok) {
         setErrorMsg({
-          title: 'Error clearing current chat',
-          subtitle: 'Please try again. If the problem persists, please contact the site administrator.'
+          title: t('chat.clearErrorTitle'),
+          subtitle: t('chat.clearErrorSubtitle')
         })
         toggleErrorDialog()
       } else {
@@ -653,13 +647,7 @@ const Chat = () => {
 
         // Returning the prettified error message
         if (reason !== '') {
-          return (
-            'The prompt was filtered due to triggering Azure OpenAI’s content filtering system.\n' +
-            'Reason: This prompt contains content flagged as ' +
-            reason +
-            '\n\n' +
-            'Please modify your prompt and retry. Learn more: https://go.microsoft.com/fwlink/?linkid=2198766'
-          )
+          return t('chat.contentFilterError', { reason })
         }
       }
     } catch (e) {
@@ -730,8 +718,7 @@ const Chat = () => {
           saveToDB(appStateContext.state.currentChat.messages, appStateContext.state.currentChat.id)
             .then(res => {
               if (!res.ok) {
-                let errorMessage =
-                  "An error occurred. Answers can't be saved at this time. If the problem persists, please contact the site administrator."
+                let errorMessage = t('chat.saveError')
                 let errorChatMsg: ChatMessage = {
                   id: uuid(),
                   role: ERROR,
@@ -815,8 +802,6 @@ const Chat = () => {
       } catch {
         return null
       }
-      // const execResults = JSON.parse(message.content) as AzureSqlServerExecResults;
-      // return execResults.all_exec_results.at(-1)?.code_exec_result;
     }
     return null
   }
@@ -840,25 +825,25 @@ const Chat = () => {
             className={styles.chatIcon}
             style={{ color: 'darkorange', height: '200px', width: '200px' }}
           />
-          <h1 className={styles.chatEmptyStateTitle}>Authentication Not Configured</h1>
+          <h1 className={styles.chatEmptyStateTitle}>{t('auth.notConfiguredTitle')}</h1>
           <h2 className={styles.chatEmptyStateSubtitle}>
-            This app does not have authentication configured. Please add an identity provider by finding your app in the{' '}
+            {t('auth.notConfiguredSubtitle1')}{' '}
             <a href="https://portal.azure.com/" target="_blank">
-              Azure Portal
-            </a>
-            and following{' '}
+              {t('auth.azurePortal')}
+            </a>{' '}
+            {t('auth.notConfiguredSubtitle2')}{' '}
             <a
               href="https://learn.microsoft.com/en-us/azure/app-service/scenario-secure-app-authentication-app-service#3-configure-authentication-and-authorization"
               target="_blank">
-              these instructions
+              {t('auth.instructions')}
             </a>
-            .
+            {t('auth.notConfiguredSubtitle3')}
           </h2>
           <h2 className={styles.chatEmptyStateSubtitle} style={{ fontSize: '20px' }}>
-            <strong>Authentication configuration takes a few minutes to apply. </strong>
+            <strong>{t('auth.configNote1')}</strong>
           </h2>
           <h2 className={styles.chatEmptyStateSubtitle} style={{ fontSize: '20px' }}>
-            <strong>If you deployed in the last 10 minutes, please wait and reload the page after 10 minutes.</strong>
+            <strong>{t('auth.configNote2')}</strong>
           </h2>
         </Stack>
       ) : (
@@ -867,8 +852,8 @@ const Chat = () => {
             {!messages || messages.length < 1 ? (
               <Stack className={styles.chatEmptyState}>
                 <img src={logo} className={styles.chatIcon} aria-hidden="true" />
-                <h1 className={styles.chatEmptyStateTitle}>{ui?.chat_title}</h1>
-                <h2 className={styles.chatEmptyStateSubtitle}>{ui?.chat_description}</h2>
+                <h1 className={styles.chatEmptyStateTitle}>{t('chat.title')}</h1>
+                <h2 className={styles.chatEmptyStateSubtitle}>{t('chat.subtitle')}</h2>
               </Stack>
             ) : (
               <div className={styles.chatMessageStream} style={{ marginBottom: isLoading ? '40px' : '0px' }} role="log">
@@ -921,7 +906,7 @@ const Chat = () => {
                       <div className={styles.chatMessageError}>
                         <Stack horizontal className={styles.chatMessageErrorContent}>
                           <ErrorCircleRegular className={styles.errorIcon} style={{ color: 'rgba(182, 52, 67, 1)' }} />
-                          <span>Error</span>
+                          <span>{t('chat.error')}</span>
                         </Stack>
                         <span className={styles.chatMessageErrorContent}>
                           {typeof answer.content === 'string' && answer.content}
@@ -935,7 +920,7 @@ const Chat = () => {
                     <div className={styles.chatMessageGpt}>
                       <Answer
                         answer={{
-                          answer: 'Antwort wird generiert...',
+                          answer: t('chat.generatingAnswer'),
                           citations: [],
                           generated_chart: null,
                           organization: organization
@@ -957,13 +942,13 @@ const Chat = () => {
                   horizontal
                   className={styles.stopGeneratingContainer}
                   role="button"
-                  aria-label="Stop generating"
+                  aria-label={t('chat.stopGenerating')}
                   tabIndex={0}
                   onClick={stopGenerating}
                   onKeyDown={e => (e.key === 'Enter' || e.key === ' ' ? stopGenerating() : null)}>
                   <SquareRegular className={styles.stopGeneratingIcon} aria-hidden="true" />
                   <span className={styles.stopGeneratingText} aria-hidden="true">
-                    Beantwortung abbrechen
+                    {t('chat.stopGenerating')}
                   </span>
                 </Stack>
               )}
@@ -991,7 +976,7 @@ const Chat = () => {
                     iconProps={{ iconName: 'Add' }}
                     onClick={newChat}
                     disabled={disabledButton()}
-                    aria-label="start a new chat button"
+                    aria-label={t('chat.newChatButton')}
                   />
                 )}
                 <CommandBarButton
@@ -1024,7 +1009,7 @@ const Chat = () => {
                       : newChat
                   }
                   disabled={disabledButton()}
-                  aria-label="clear chat button"
+                  aria-label={t('chat.clearChatButton')}
                 />
                 <Dialog
                   hidden={hideErrorDialog}
@@ -1034,7 +1019,7 @@ const Chat = () => {
               </Stack>
               <QuestionInput
                 clearOnSend
-                placeholder="Neue Frage eingeben..."
+                placeholder={t('chat.inputPlaceholder')}
                 disabled={isLoading}
                 onSend={(question, id) => {
                   appStateContext?.state.isCosmosDBAvailable?.cosmosDB
@@ -1049,19 +1034,23 @@ const Chat = () => {
           </div>
           {/* Citation Panel */}
           {messages && messages.length > 0 && isCitationPanelOpen && activeCitation && (
-            <Stack.Item className={styles.citationPanel} tabIndex={0} role="tabpanel" aria-label="Citations Panel">
+            <Stack.Item
+              className={styles.citationPanel}
+              tabIndex={0}
+              role="tabpanel"
+              aria-label={t('chat.citationsPanel')}>
               <Stack
-                aria-label="Citations Panel Header Container"
+                aria-label={t('chat.citationsPanelHeader')}
                 horizontal
                 className={styles.citationPanelHeaderContainer}
                 horizontalAlign="space-between"
                 verticalAlign="center">
-                <span aria-label="Citations" className={styles.citationPanelHeader}>
-                  Citations
+                <span aria-label={t('chat.citations')} className={styles.citationPanelHeader}>
+                  {t('chat.citations')}
                 </span>
                 <IconButton
                   iconProps={{ iconName: 'Cancel' }}
-                  aria-label="Close citations panel"
+                  aria-label={t('chat.closeCitationsPanel')}
                   onClick={() => setIsCitationPanelOpen(false)}
                 />
               </Stack>
@@ -1088,19 +1077,23 @@ const Chat = () => {
             </Stack.Item>
           )}
           {messages && messages.length > 0 && isIntentsPanelOpen && (
-            <Stack.Item className={styles.citationPanel} tabIndex={0} role="tabpanel" aria-label="Intents Panel">
+            <Stack.Item
+              className={styles.citationPanel}
+              tabIndex={0}
+              role="tabpanel"
+              aria-label={t('chat.intentsPanel')}>
               <Stack
-                aria-label="Intents Panel Header Container"
+                aria-label={t('chat.intentsPanelHeader')}
                 horizontal
                 className={styles.citationPanelHeaderContainer}
                 horizontalAlign="space-between"
                 verticalAlign="center">
-                <span aria-label="Intents" className={styles.citationPanelHeader}>
-                  Intents
+                <span aria-label={t('chat.intents')} className={styles.citationPanelHeader}>
+                  {t('chat.intents')}
                 </span>
                 <IconButton
                   iconProps={{ iconName: 'Cancel' }}
-                  aria-label="Close intents panel"
+                  aria-label={t('chat.closeIntentsPanel')}
                   onClick={() => setIsIntentsPanelOpen(false)}
                 />
               </Stack>
@@ -1108,11 +1101,11 @@ const Chat = () => {
                 {appStateContext?.state?.answerExecResult[answerId]?.map((execResult: ExecResults, index) => (
                   <Stack className={styles.exectResultList} verticalAlign="space-between">
                     <>
-                      <span>Intent:</span> <p>{execResult.intent}</p>
+                      <span>{t('chat.intent')}:</span> <p>{execResult.intent}</p>
                     </>
                     {execResult.search_query && (
                       <>
-                        <span>Search Query:</span>
+                        <span>{t('chat.searchQuery')}:</span>
                         <SyntaxHighlighter
                           style={nord}
                           wrapLines={true}
@@ -1125,12 +1118,12 @@ const Chat = () => {
                     )}
                     {execResult.search_result && (
                       <>
-                        <span>Search Result:</span> <p>{execResult.search_result}</p>
+                        <span>{t('chat.searchResult')}:</span> <p>{execResult.search_result}</p>
                       </>
                     )}
                     {execResult.code_generated && (
                       <>
-                        <span>Code Generated:</span>
+                        <span>{t('chat.codeGenerated')}:</span>
                         <SyntaxHighlighter
                           style={nord}
                           wrapLines={true}

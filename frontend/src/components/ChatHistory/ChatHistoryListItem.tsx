@@ -21,6 +21,7 @@ import { useBoolean } from '@fluentui/react-hooks'
 import { historyDelete, historyList, historyRename } from '../../api'
 import { Conversation } from '../../api/models'
 import { AppStateContext } from '../../state/AppProvider'
+import { useLanguage } from '../../state/LanguageContext'
 
 import { GroupedChatHistory } from './ChatHistoryList'
 
@@ -59,14 +60,15 @@ export const ChatHistoryListItemCell: React.FC<ChatHistoryListItemCellProps> = (
   const [errorRename, setErrorRename] = useState<string | undefined>(undefined)
   const [textFieldFocused, setTextFieldFocused] = useState(false)
   const textFieldRef = useRef<ITextField | null>(null)
+  const { t } = useLanguage()
 
   const appStateContext = React.useContext(AppStateContext)
   const isSelected = item?.id === appStateContext?.state.currentChat?.id
   const dialogContentProps = {
     type: DialogType.close,
-    title: 'Möchten Sie diesen Artikel wirklich löschen?',
-    closeButtonAriaLabel: 'Close',
-    subText: 'Der Verlauf dieser Chatsitzung wird dauerhaft gelöscht.'
+    title: t('chatHistory.deleteDialog.title'),
+    closeButtonAriaLabel: t('close'),
+    subText: t('chatHistory.deleteDialog.subText')
   }
 
   const modalProps = {
@@ -126,7 +128,7 @@ export const ChatHistoryListItemCell: React.FC<ChatHistoryListItemCellProps> = (
       return
     }
     if (editTitle == item.title) {
-      setErrorRename('Error: Enter a new title to proceed.')
+      setErrorRename(t('chatHistory.renameError.sameTitle'))
       setTimeout(() => {
         setErrorRename(undefined)
         setTextFieldFocused(true)
@@ -139,7 +141,7 @@ export const ChatHistoryListItemCell: React.FC<ChatHistoryListItemCellProps> = (
     setRenameLoading(true)
     const response = await historyRename(item.id, editTitle)
     if (!response.ok) {
-      setErrorRename('Error: could not rename item')
+      setErrorRename(t('chatHistory.renameError.general'))
       setTimeout(() => {
         setTextFieldFocused(true)
         setErrorRename(undefined)
@@ -178,12 +180,11 @@ export const ChatHistoryListItemCell: React.FC<ChatHistoryListItemCellProps> = (
     <Stack
       key={item.id}
       tabIndex={0}
-      aria-label="chat history item"
+      aria-label={t('chatHistory.itemAriaLabel')}
       className={styles.itemCell}
       onClick={() => handleSelectItem()}
       onKeyDown={e => (e.key === 'Enter' || e.key === ' ' ? handleSelectItem() : null)}
       verticalAlign="center"
-      // horizontal
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       styles={{
@@ -194,7 +195,10 @@ export const ChatHistoryListItemCell: React.FC<ChatHistoryListItemCellProps> = (
       {edit ? (
         <>
           <Stack.Item style={{ width: '100%' }}>
-            <form aria-label="edit title form" onSubmit={e => handleSaveEdit(e)} style={{ padding: '5px 0px' }}>
+            <form
+              aria-label={t('chatHistory.editFormAriaLabel')}
+              onSubmit={e => handleSaveEdit(e)}
+              style={{ padding: '5px 0px' }}>
               <Stack horizontal verticalAlign={'start'}>
                 <Stack.Item>
                   <TextField
@@ -204,19 +208,18 @@ export const ChatHistoryListItemCell: React.FC<ChatHistoryListItemCellProps> = (
                     placeholder={item.title}
                     onChange={chatHistoryTitleOnChange}
                     onKeyDown={handleKeyPressEdit}
-                    // errorMessage={errorRename}
                     disabled={errorRename ? true : false}
                   />
                 </Stack.Item>
                 {editTitle && (
                   <Stack.Item>
-                    <Stack aria-label="action button group" horizontal verticalAlign={'center'}>
+                    <Stack aria-label={t('chatHistory.actionButtonsAriaLabel')} horizontal verticalAlign={'center'}>
                       <IconButton
                         role="button"
                         disabled={errorRename !== undefined}
                         onKeyDown={e => (e.key === ' ' || e.key === 'Enter' ? handleSaveEdit(e) : null)}
                         onClick={e => handleSaveEdit(e)}
-                        aria-label="confirm new title"
+                        aria-label={t('chatHistory.confirmEditAriaLabel')}
                         iconProps={{ iconName: 'CheckMark' }}
                         styles={{ root: { color: 'green', marginLeft: '5px' } }}
                       />
@@ -225,7 +228,7 @@ export const ChatHistoryListItemCell: React.FC<ChatHistoryListItemCellProps> = (
                         disabled={errorRename !== undefined}
                         onKeyDown={e => (e.key === ' ' || e.key === 'Enter' ? cancelEditTitle() : null)}
                         onClick={() => cancelEditTitle()}
-                        aria-label="cancel edit title"
+                        aria-label={t('chatHistory.cancelEditAriaLabel')}
                         iconProps={{ iconName: 'cancel' }}
                         styles={{ root: { color: 'red', marginLeft: '5px' } }}
                       />
@@ -253,14 +256,14 @@ export const ChatHistoryListItemCell: React.FC<ChatHistoryListItemCellProps> = (
                 <IconButton
                   className={styles.itemButton}
                   iconProps={{ iconName: 'delete' }}
-                  title="Löschen"
+                  title={t('delete')}
                   onClick={toggleDeleteDialog}
                   onKeyDown={e => (e.key === ' ' ? toggleDeleteDialog() : null)}
                 />
                 <IconButton
                   className={styles.itemButton}
                   iconProps={{ iconName: 'edit' }}
-                  title="Bearbeiten"
+                  title={t('edit')}
                   onClick={onEdit}
                   onKeyDown={e => (e.key === ' ' ? onEdit() : null)}
                 />
@@ -274,7 +277,7 @@ export const ChatHistoryListItemCell: React.FC<ChatHistoryListItemCellProps> = (
           styles={{
             root: { color: 'red', marginTop: 5, fontSize: 14 }
           }}>
-          Error: could not delete item
+          {t('chatHistory.deleteError')}
         </Text>
       )}
       <Dialog
@@ -283,8 +286,8 @@ export const ChatHistoryListItemCell: React.FC<ChatHistoryListItemCellProps> = (
         dialogContentProps={dialogContentProps}
         modalProps={modalProps}>
         <DialogFooter>
-          <PrimaryButton onClick={onDelete} text="Löschen" />
-          <DefaultButton onClick={toggleDeleteDialog} text="Stornieren" />
+          <PrimaryButton onClick={onDelete} text={t('delete')} />
+          <DefaultButton onClick={toggleDeleteDialog} text={t('cancel')} />
         </DialogFooter>
       </Dialog>
     </Stack>
@@ -293,6 +296,7 @@ export const ChatHistoryListItemCell: React.FC<ChatHistoryListItemCellProps> = (
 
 export const ChatHistoryListItemGroups: React.FC<ChatHistoryListItemGroupsProps> = ({ groupedChatHistory }) => {
   const appStateContext = useContext(AppStateContext)
+  const { t } = useLanguage()
   const observerTarget = useRef(null)
   const [, setSelectedItem] = React.useState<Conversation | null>(null)
   const [offset, setOffset] = useState<number>(25)
@@ -360,12 +364,12 @@ export const ChatHistoryListItemGroups: React.FC<ChatHistoryListItemGroupsProps>
               verticalAlign="center"
               key={group.month}
               className={styles.chatGroup}
-              aria-label={`chat history group: ${group.month}`}>
+              aria-label={`${t('chatHistory.groupAriaLabel')} ${group.month}`}>
               <Stack aria-label={group.month} className={styles.chatMonth}>
                 {formatMonth(group.month)}
               </Stack>
               <List
-                aria-label={`chat history list`}
+                aria-label={t('chatHistory.listAriaLabel')}
                 items={group.entries}
                 onRenderCell={onRenderCell}
                 className={styles.chatList}
@@ -387,7 +391,7 @@ export const ChatHistoryListItemGroups: React.FC<ChatHistoryListItemGroupsProps>
       )}
       {showSpinner && (
         <div className={styles.spinnerContainer}>
-          <Spinner size={SpinnerSize.small} aria-label="loading more chat history" className={styles.spinner} />
+          <Spinner size={SpinnerSize.small} aria-label={t('chatHistory.loadingAriaLabel')} className={styles.spinner} />
         </div>
       )}
     </div>

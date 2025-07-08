@@ -1,13 +1,12 @@
-import React, { useContext, useEffect, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { NavLink } from 'react-router-dom'
-import SnapLogo from '../../assets/Snap.svg'
 import './Navbar.css'
 import { useAppUser } from '../../state/AppUserProvider'
-import { FILTER_FIELD, FILTER_FIELD2 } from '../../constants/variables'
+import { FILTER_FIELD, FILTER_FIELD2, logos } from '../../constants/variables'
 import { useLanguage } from '../../state/LanguageContext'
 
 export default function Navbar() {
-  const { userInfo, authEnabled } = useAppUser()
+  const { userInfo } = useAppUser()
   const { t, language, setLanguage } = useLanguage()
   const [userType, setUserType] = useState<string>('')
   const [organization, setOrganization] = useState<string>('')
@@ -15,21 +14,24 @@ export default function Navbar() {
   useEffect(() => {
     if (userInfo && userInfo.length > 0) {
       const organizationClaim = userInfo[0].user_claims.find(claim => claim.typ === FILTER_FIELD)
-      console.log('city value in navbar:', organizationClaim)
       setOrganization(organizationClaim ? organizationClaim.val.trim().toLowerCase() : '')
 
       const userTypeClaim = userInfo[0].user_claims.find(claim => claim.typ === FILTER_FIELD2)
-      console.log('streetaddress value in navbar:', userTypeClaim)
       setUserType(userTypeClaim ? userTypeClaim.val.trim().toLowerCase() : '')
     }
   }, [userInfo])
+
+  // choose logo from nested navbar object
+  const navbarLogos = logos.navbar as Record<string, string>
+  const logoSrc = navbarLogos[organization] || navbarLogos.default
 
   return (
     <nav className="navbar navbar-expand-lg bg-body-tertiary bg-dark sticky-top" data-bs-theme="dark">
       <div className="container-fluid">
         <a className="navbar-brand" href="#">
-          <img src={SnapLogo} alt="Logo" height="35" />
+          <img src={logoSrc} alt="Logo" height="35" />
         </a>
+
         <button
           className="navbar-toggler"
           type="button"
@@ -40,6 +42,7 @@ export default function Navbar() {
           aria-label={t('navbar.toggleMenu')}>
           <span className="navbar-toggler-icon"></span>
         </button>
+
         <div className="collapse navbar-collapse" id="navbarNavAltMarkup">
           <div className="navbar-nav ms-auto">
             <NavLink
@@ -47,6 +50,7 @@ export default function Navbar() {
               to="/">
               {t('navbar.chatbot')}
             </NavLink>
+
             {userType !== 'read-only' && (
               <NavLink
                 className={({ isActive }) => (isActive ? 'nav-link active fw-bold me-2' : 'nav-link fw-bold me-2')}
@@ -54,7 +58,8 @@ export default function Navbar() {
                 {t('navbar.uploadFiles')}
               </NavLink>
             )}
-            {(!userType || userType == 'admin') && (
+
+            {(!userType || userType === 'admin') && (
               <>
                 <NavLink
                   className={({ isActive }) => (isActive ? 'nav-link active fw-bold me-2' : 'nav-link fw-bold me-2')}
@@ -68,6 +73,7 @@ export default function Navbar() {
                 </NavLink>
               </>
             )}
+
             {/* Logout button */}
             <button className="nav-link fw-bold" onClick={() => (window.location.href = '/.auth/logout')}>
               {t('navbar.logout')}

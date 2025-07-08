@@ -312,7 +312,7 @@ const FileUpload: React.FC = () => {
           {/* Filter by organisation */}
           {!companyName && (
             <div className="filter-section mb-3">
-              <label htmlFor="organization-filter">{t('fileUpload.filterLabel')} </label>
+              <label htmlFor="organization-filter">{t('fileUpload.filterLabel')} &nbsp;</label>
               <select
                 id="organization-filter"
                 value={organizationFilter}

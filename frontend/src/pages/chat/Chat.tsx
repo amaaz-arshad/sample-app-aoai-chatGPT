@@ -39,7 +39,7 @@ import { QuestionInput } from '../../components/QuestionInput'
 import { ChatHistoryPanel } from '../../components/ChatHistory/ChatHistoryPanel'
 import { AppStateContext } from '../../state/AppProvider'
 import { useBoolean } from '@fluentui/react-hooks'
-import { FILTER_FIELD } from '../../constants/variables'
+import { FILTER_FIELD, logos } from '../../constants/variables'
 import { toast } from 'react-toastify'
 import { useLanguage } from '../../state/LanguageContext'
 
@@ -115,7 +115,10 @@ const Chat = () => {
 
   useEffect(() => {
     if (!appStateContext?.state.isLoading) {
-      setLogo(ui?.chat_logo || ui?.logo || Snap)
+      const chatLogos = logos.chat as Record<string, string>
+      const logoSrc = chatLogos[organization] || chatLogos.default
+      setLogo(logoSrc)
+      // setLogo(ui?.chat_logo || ui?.logo || Snap)
     }
   }, [appStateContext?.state.isLoading])
 

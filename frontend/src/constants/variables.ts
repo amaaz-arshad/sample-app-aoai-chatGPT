@@ -1,7 +1,26 @@
 import { Language } from './types'
-
+import SnapLogo from '../assets/Snap.svg'
+import publishOneNav from '../assets/publishone-nav.svg'
+import publishOneChat from '../assets/publishone-chat.png'
+import vjoonNav from '../assets/vjoon-nav.svg'
+import vjoonChat from '../assets/vjoon-chat.png'
 export const FILTER_FIELD = 'city'
 export const FILTER_FIELD2 = 'streetAddress'
+
+export const logos = {
+  navbar: {
+    default: SnapLogo,
+    publishone: publishOneNav,
+    vjoon: vjoonNav,
+    'vjoon k4': vjoonNav
+  },
+  chat: {
+    default: SnapLogo,
+    publishone: publishOneChat,
+    vjoon: vjoonChat,
+    'vjoon k4': vjoonChat
+  }
+}
 
 export const translations: Record<Language, Record<string, string>> = {
   en: {

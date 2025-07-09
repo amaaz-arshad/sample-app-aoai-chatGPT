@@ -10,6 +10,7 @@ export default function Navbar() {
   const { t, language, setLanguage } = useLanguage()
   const [userType, setUserType] = useState<string>('')
   const [organization, setOrganization] = useState<string>('')
+  const [isLoading, setIsLoading] = useState<boolean>(true)
 
   useEffect(() => {
     if (userInfo && userInfo.length > 0) {
@@ -19,6 +20,7 @@ export default function Navbar() {
       const userTypeClaim = userInfo[0].user_claims.find(claim => claim.typ === FILTER_FIELD2)
       setUserType(userTypeClaim ? userTypeClaim.val.trim().toLowerCase() : '')
     }
+    setIsLoading(false)
   }, [userInfo])
 
   // choose logo from nested navbar object
@@ -27,7 +29,7 @@ export default function Navbar() {
 
   return (
     <nav className="navbar navbar-expand-lg bg-body-tertiary bg-dark sticky-top" data-bs-theme="dark">
-      <div className="container-fluid">
+      <div className="container-fluid" style={{ visibility: isLoading ? 'hidden' : 'visible' }}>
         <a className="navbar-brand" href="#">
           <img src={logoSrc} alt="Logo" height="35" />
         </a>

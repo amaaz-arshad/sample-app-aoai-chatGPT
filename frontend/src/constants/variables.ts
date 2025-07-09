@@ -4,6 +4,7 @@ import publishOneNav from '../assets/publishone-nav.svg'
 import publishOneChat from '../assets/publishone-chat.png'
 import vjoonNav from '../assets/vjoon-nav.svg'
 import vjoonChat from '../assets/vjoon-chat.png'
+
 export const FILTER_FIELD = 'city'
 export const FILTER_FIELD2 = 'streetAddress'
 

@@ -42,6 +42,7 @@ import { useBoolean } from '@fluentui/react-hooks'
 import { FILTER_FIELD, logos } from '../../constants/variables'
 import { toast } from 'react-toastify'
 import { useLanguage } from '../../state/LanguageContext'
+import { useAppUser } from '../../state/AppUserProvider'
 
 const enum messageStatus {
   NotRunning = 'Not Running',
@@ -55,6 +56,7 @@ const Chat = () => {
   const AUTH_ENABLED = appStateContext?.state.frontendSettings?.auth_enabled
   const chatMessageStreamEnd = useRef<HTMLDivElement | null>(null)
   const [isLoading, setIsLoading] = useState<boolean>(false)
+  const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true)
   const [showLoadingMessage, setShowLoadingMessage] = useState<boolean>(false)
   const [activeCitation, setActiveCitation] = useState<Citation>()
   const [isCitationPanelOpen, setIsCitationPanelOpen] = useState<boolean>(false)
@@ -72,6 +74,7 @@ const Chat = () => {
   const [userDetails, setUserDetails] = useState<UserInfo[]>([])
   const [organization, setOrganization] = useState('')
   const { t } = useLanguage()
+  const { userInfo } = useAppUser()
 
   const errorDialogContentProps = {
     type: DialogType.close,
@@ -91,6 +94,14 @@ const Chat = () => {
   const NO_CONTENT_ERROR = 'No content in messages object.'
 
   useEffect(() => {
+    if (userInfo && userInfo.length > 0) {
+      const organizationClaim = userInfo[0].user_claims.find(claim => claim.typ === FILTER_FIELD)
+      setOrganization(organizationClaim ? organizationClaim.val.trim().toLowerCase() : '')
+    }
+    setIsAuthLoading(false)
+  }, [userInfo])
+
+  useEffect(() => {
     if (
       appStateContext?.state.isCosmosDBAvailable?.status !== CosmosDBStatus.Working &&
       appStateContext?.state.isCosmosDBAvailable?.status !== CosmosDBStatus.NotConfigured &&
@@ -102,7 +113,7 @@ const Chat = () => {
         title: t('chat.historyDisabled'),
         subtitle: subtitle
       })
-      toggleErrorDialog()
+      // toggleErrorDialog()
     }
   }, [appStateContext?.state.isCosmosDBAvailable])
 
@@ -115,9 +126,6 @@ const Chat = () => {
 
   useEffect(() => {
     if (!appStateContext?.state.isLoading) {
-      const chatLogos = logos.chat as Record<string, string>
-      const logoSrc = chatLogos[organization] || chatLogos.default
-      setLogo(logoSrc)
       // setLogo(ui?.chat_logo || ui?.logo || Snap)
     }
   }, [appStateContext?.state.isLoading])
@@ -146,7 +154,6 @@ const Chat = () => {
     console.log(userInfoList)
     console.log('companyname:', organizationVal)
     setUserDetails(userInfoList)
-    setOrganization(organizationVal)
     if (userInfoList.length === 0 && window.location.hostname !== '127.0.0.1') {
       setShowAuthMessage(true)
     } else {
@@ -820,6 +827,9 @@ const Chat = () => {
 
   const sendFollowupQuestion = (question: string) => {}
 
+  const chatLogos = logos.chat as Record<string, string>
+  const logoSrc = chatLogos[organization] || chatLogos.default
+
   return (
     <div className={styles.container} role="main">
       {showAuthMessage ? (
@@ -854,7 +864,12 @@ const Chat = () => {
           <div className={styles.chatContainer}>
             {!messages || messages.length < 1 ? (
               <Stack className={styles.chatEmptyState}>
-                <img src={logo} className={styles.chatIcon} aria-hidden="true" />
+                <img
+                  src={logoSrc}
+                  className={styles.chatIcon}
+                  aria-hidden="true"
+                  style={{ visibility: isAuthLoading ? 'hidden' : 'visible' }}
+                />
                 <h1 className={styles.chatEmptyStateTitle}>{t('chat.title')}</h1>
                 <h2 className={styles.chatEmptyStateSubtitle}>{t('chat.subtitle')}</h2>
               </Stack>

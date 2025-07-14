@@ -52,11 +52,9 @@ from io import BytesIO
 import gc
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-
-# from rake_nltk import Rake
-
-# Initialize RAKE
-# rake = Rake()
+import threading
+from collections import deque
+from datetime import datetime
 
 load_dotenv() 
 
@@ -111,6 +109,41 @@ MAX_WORKERS = int(os.getenv("THREAD_POOL_MAX_WORKERS", "3"))
 # Initialize a thread pool for CPU-bound tasks
 executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
+upload_jobs = {}
+job_lock = threading.Lock()
+JOB_EXPIRY_SECONDS = 86400  # 24 hours
+
+# Background job status tracking
+def update_job_status(job_id: str, status: str, result: dict = None, error: str = None):
+    with job_lock:
+        upload_jobs[job_id] = {
+            "status": status,
+            "result": result,
+            "error": error,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+def cleanup_expired_jobs():
+    while True:
+        time.sleep(3600)  # Cleanup hourly
+        with job_lock:
+            now = datetime.utcnow()
+            expired_keys = [
+                job_id for job_id, job in upload_jobs.items()
+                if (now - datetime.fromisoformat(job["timestamp"])).total_seconds() > JOB_EXPIRY_SECONDS
+            ]
+            for job_id in expired_keys:
+                del upload_jobs[job_id]
+
+# Start cleanup thread
+cleanup_thread = threading.Thread(target=cleanup_expired_jobs, daemon=True)
+cleanup_thread.start()
+
+# Helper to run async in background thread
+def run_async_in_thread(loop, coro):
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(coro)
+    
 def create_app():
     app = Quart(__name__)
     app.register_blueprint(bp)
@@ -379,7 +412,8 @@ async def prepare_model_args(request_body, request_headers):
         # public_base_url = request.url_root.rstrip("/")
         data_source_config["parameters"]["embedding_dependency"] = {
             "type": "endpoint",
-            "endpoint": app_settings.azure_openai.embedding_endpoint,
+            # "endpoint": app_settings.azure_openai.embedding_endpoint,
+            "endpoint": " https://03b1b70e7023.ngrok-free.app/api/embed",
             "authentication": {
                 "type": "api_key",
                 "key": f"{authenticated_user['auth_token']}",
@@ -1077,12 +1111,17 @@ async def list_files():
     
     return {"files": blob_list}
 
-# Define a function to extract keyphrases using RAKE
-# def extract_keyphrases(content):
-#     rake.extract_keywords_from_text(content)
-#     return rake.get_ranked_phrases()
 
-def extract_pages_as_markdown(pdf_bytes: bytes, file_name: str) -> list:
+# Helper function to extract pages from PDF bytes
+async def extract_pages_as_markdown(pdf_bytes: bytes, file_name: str) -> list:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        executor, 
+        lambda: _extract_pages_sync(pdf_bytes, file_name)
+    )
+
+def _extract_pages_sync(pdf_bytes: bytes, file_name: str) -> list:
+    """Synchronous PDF processing"""
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     total_pages = doc.page_count
     pages = []
@@ -1096,38 +1135,34 @@ def extract_pages_as_markdown(pdf_bytes: bytes, file_name: str) -> list:
         })
     return pages
 
-
-
-async def process_single_file(uploaded_file, organization):
-    file_name = uploaded_file.filename
-    blob_path = f"{organization}/{file_name}"
+async def process_single_file(filename: str, content: bytes, organization: str):
+    blob_path = f"{organization}/{filename}"
     blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_path)
     
     if blob_client.exists():
-        return None, file_name  # Skip existing
+        return None, filename  # Skip existing
     
     try:
-        pdf_bytes = uploaded_file.read()
-        loop = asyncio.get_running_loop()
-        
-        # Offload CPU-intensive tasks to thread pool
-        print(f"Processing file: {file_name}")
-        page_data = await loop.run_in_executor(
-            executor, 
-            lambda: extract_pages_as_markdown(pdf_bytes, file_name)
-        )
+        print(f"Processing file: {filename}")
+        # Extract pages from PDF
+        page_data = await extract_pages_as_markdown(content, filename)
         
         docs_array = []
+        loop = asyncio.get_running_loop()
         
-        # Modify the embedding generation part:
-        batch_size = MAX_WORKERS  # Adjust based on your memory constraints
+        # Process in batches
+        batch_size = MAX_WORKERS  # Adjust based on memory constraints
         for i in range(0, len(page_data), batch_size):
             batch = page_data[i:i+batch_size]
             texts = [p["markdown"] for p in batch]
+            
+            # Generate embeddings in thread pool
             vectors = await loop.run_in_executor(
                 executor,
                 lambda: model.encode(texts).tolist()
             )
+            
+            # Create document entries
             for j, p in enumerate(batch):
                 docs_array.append({
                     "id": str(uuid.uuid4()),
@@ -1135,72 +1170,62 @@ async def process_single_file(uploaded_file, organization):
                     "title": f"Page {p['page_number']}",
                     "page": p["page_number"],
                     "total_pages": p["total_pages"],
-                    "file": file_name,
+                    "file": filename,
                     "content": p["markdown"],
                     "contentVector": vectors[j],
                     "keywords": []
                 })
         
-        # for p in page_data:
-        #     # Process embeddings in thread pool
-        #     print(f"Generating embeddings for page {p['page_number']} of {file_name}")
-        #     vector = await loop.run_in_executor(
-        #         executor,
-        #         lambda c=p["markdown"]: model.encode(c).tolist()
-        #     )
-        #     docs_array.append({
-        #         "id": str(uuid.uuid4()),
-        #         "organization": organization,
-        #         "title": f"Page {p['page_number']}",
-        #         "page": p["page_number"],
-        #         "total_pages": p["total_pages"],
-        #         "file": file_name,
-        #         "content": p["markdown"],
-        #         "contentVector": vector,
-        #         "keywords": []
-        #     })
-        
-        # Upload in batches of 5 pages
+        # Upload documents in batches of 5
         for i in range(0, len(docs_array), 5):
             batch = docs_array[i:i+5]
             search_client.upload_documents(batch)
             await asyncio.sleep(0.5)  # Throttle requests
         
         # Upload to blob storage
-        blob_client.upload_blob(pdf_bytes)
-        return file_name, None
+        blob_client.upload_blob(content)
+        return filename, None
     
     except Exception as e:
-        logging.error(f"Failed {file_name}: {str(e)}")
-        return None, file_name
+        logging.error(f"Failed {filename}: {str(e)}")
+        return None, filename
     finally:
         # Explicit memory cleanup
-        del pdf_bytes
-        del page_data
-        del docs_array
+        del content
         gc.collect()
+
 
 @bp.route("/pipeline/upload", methods=["POST"])
 async def upload_files():
     form = await request.form
     files = (await request.files).getlist("files")
-    organization = form.get("organization", "").strip().lower().strip(".")
+    organization = form.get("organization", "").strip().lower().strip('.')
     
-    processed_files = []
-    skipped_files = []
+    if not organization:
+        return jsonify({"detail": "Missing 'organization' field."}), 400
     
-    # Process files sequentially with async
+    job_id = str(uuid.uuid4())
+    update_job_status(job_id, "queued")
+    
+    # Capture file content immediately before files are closed
+    file_data = []
     for uploaded_file in files:
-        processed, skipped = await process_single_file(uploaded_file, organization)
-        if processed:
-            processed_files.append(processed)
-        if skipped:
-            skipped_files.append(skipped)
+        file_data.append({
+            "filename": uploaded_file.filename,
+            "content": uploaded_file.read(),
+            "organization": organization
+        })
     
-    return jsonify({
-        "processed_files": processed_files,
-        "skipped_files": skipped_files
-    })
+    # Start background processing
+    loop = asyncio.new_event_loop()
+    threading.Thread(
+        target=run_async_in_thread,
+        args=(loop, async_process_files(file_data, job_id, False)),
+        daemon=True
+    ).start()
+    
+    return jsonify({"job_id": job_id}), 202
+
 
 # Route to delete all files or files by companyClaim or organizationFilter
 @bp.route("/pipeline/delete_all", methods=["DELETE"])
@@ -1729,30 +1754,23 @@ def process_xml_file(
     return docs_array
 
 
-async def process_single_xml_file(uploaded_file, organization_folder):
-    file_name = uploaded_file.filename
-    blob_path = f"{organization_folder}/{file_name}"
+async def process_single_xml_file(filename: str, content: bytes, organization: str):
+    blob_path = f"{organization}/{filename}"
     blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_path)
 
-    # Skip existing files
     if blob_client.exists():
-        return None, file_name  # (processed, skipped)
+        return None, filename  # Skip existing
 
     try:
-        # Read file content
-        file_content = uploaded_file.read()
-        if not file_content:
-            return None, file_name
-
         loop = asyncio.get_running_loop()
         
         # Offload XML processing to thread pool
         docs_array = await loop.run_in_executor(
             executor,
             lambda: process_xml_file(
-                xml_data=file_content,
-                organization=organization_folder,
-                file_name=file_name,
+                xml_data=content,
+                organization=organization,
+                file_name=filename,
                 model=model
             )
         )
@@ -1764,21 +1782,20 @@ async def process_single_xml_file(uploaded_file, organization_folder):
                 search_client.upload_documents(batch)
                 await asyncio.sleep(0.3)  # Throttle requests
             except Exception as e:
-                logging.error(f"Batch upload failed for {file_name}: {str(e)}")
+                logging.error(f"Batch upload failed for {filename}: {str(e)}")
         
         # Upload original XML to blob storage
-        blob_client.upload_blob(file_content)
-        return file_name, None
+        blob_client.upload_blob(content)
+        return filename, None
     
     except Exception as e:
-        logging.error(f"Failed to process {file_name}: {str(e)}")
-        return None, file_name
+        logging.error(f"Failed to process {filename}: {str(e)}")
+        return None, filename
     finally:
         # Explicit memory cleanup
-        del file_content
-        if 'docs_array' in locals():
-            del docs_array
+        del content
         gc.collect()
+        
 
 @bp.route("/pipeline/upload_xml", methods=["POST"])
 async def upload_xml_files():
@@ -1788,22 +1805,77 @@ async def upload_xml_files():
     
     if not organization:
         return jsonify({"detail": "Missing 'organization' field."}), 400
-
-    processed_files = []
-    skipped_files = []
     
-    # Process files sequentially
+    job_id = str(uuid.uuid4())
+    update_job_status(job_id, "queued")
+    
+    # Capture file content immediately before files are closed
+    file_data = []
     for uploaded_file in files:
-        processed, skipped = await process_single_xml_file(uploaded_file, organization)
-        if processed:
-            processed_files.append(processed)
-        if skipped:
-            skipped_files.append(skipped)
+        file_data.append({
+            "filename": uploaded_file.filename,
+            "content": uploaded_file.read(),
+            "organization": organization
+        })
+    
+    # Start background processing
+    loop = asyncio.new_event_loop()
+    threading.Thread(
+        target=run_async_in_thread,
+        args=(loop, async_process_files(file_data, job_id, True)),
+        daemon=True
+    ).start()
+    
+    return jsonify({"job_id": job_id}), 202
+
+
+async def async_process_files(file_data, job_id, is_xml=False):
+    try:
+        processed_files = []
+        skipped_files = []
+        
+        for file_info in file_data:
+            if is_xml:
+                processed, skipped = await process_single_xml_file(
+                    file_info["filename"],
+                    file_info["content"],
+                    file_info["organization"]
+                )
+            else:
+                processed, skipped = await process_single_file(
+                    file_info["filename"],
+                    file_info["content"],
+                    file_info["organization"]
+                )
+            
+            if processed:
+                processed_files.append(processed)
+            if skipped:
+                skipped_files.append(skipped)
+        
+        update_job_status(job_id, "completed", {
+            "processed_files": processed_files,
+            "skipped_files": skipped_files
+        })
+    except Exception as e:
+        logging.error(f"Background job failed: {str(e)}")
+        update_job_status(job_id, "failed", error=str(e))
+
+
+@bp.route("/pipeline/job_status/<job_id>", methods=["GET"])
+async def get_job_status(job_id: str):
+    with job_lock:
+        job = upload_jobs.get(job_id)
+    
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
     
     return jsonify({
-        "processed_files": processed_files,
-        "skipped_files": skipped_files
+        "job_id": job_id,
+        "status": job["status"],
+        "result": job.get("result"),
+        "error": job.get("error"),
+        "timestamp": job["timestamp"]
     })
-
 
 app = create_app()

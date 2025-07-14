@@ -1,4 +1,68 @@
 .nav-link.active {
-    /* background-color: #007bff;  */
-    color: white;
+  /* background-color: #007bff; */
+  color: white;
+}
+
+.position-relative {
+  position: relative;
+}
+
+.position-absolute {
+  position: absolute;
+}
+
+.translate-middle {
+  transform: translate(-50%, -50%);
+}
+
+.top-0 {
+  top: 0;
+}
+
+.start-100 {
+  left: 100%;
+}
+
+.badge {
+  font-size: 0.65em;
+  padding: 0.35em 0.65em;
+  /* Adjusted positioning */
+  top: -5px !important;
+  transform: translateX(-50%) !important;
+}
+
+.bg-danger {
+  background-color: #dc3545;
+}
+
+.job-tooltip-content {
+  text-align: center;
+  padding: 8px 12px;
+}
+
+/* Animation for badge */
+@keyframes pulse {
+  0% {
+    transform: translateX(-50%) scale(1);
   }
+  50% {
+    transform: translateX(-50%) scale(1.1);
+  }
+  100% {
+    transform: translateX(-50%) scale(1);
+  }
+}
+
+.badge {
+  animation: pulse 1.5s infinite;
+}
+
+/* Alignment fixes */
+.d-flex.align-items-center {
+  align-items: center !important;
+}
+
+.notification-bell {
+  display: flex;
+  align-items: center;
+}

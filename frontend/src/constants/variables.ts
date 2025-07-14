@@ -4,6 +4,8 @@ import publishOneNav from '../assets/publishone-nav.svg'
 import publishOneChat from '../assets/publishone-chat.png'
 import vjoonNav from '../assets/vjoon-nav.svg'
 import vjoonChat from '../assets/vjoon-chat.png'
+import agindoNav from '../assets/agindo-nav.png'
+import agindoChat from '../assets/agindo-chat.png'
 
 export const FILTER_FIELD = 'city'
 export const FILTER_FIELD2 = 'streetAddress'
@@ -13,13 +15,15 @@ export const logos = {
     default: SnapLogo,
     publishone: publishOneNav,
     vjoon: vjoonNav,
-    'vjoon k4': vjoonNav
+    'vjoon k4': vjoonNav,
+    agindo: agindoNav
   },
   chat: {
     default: SnapLogo,
     publishone: publishOneChat,
     vjoon: vjoonChat,
-    'vjoon k4': vjoonChat
+    'vjoon k4': vjoonChat,
+    agindo: agindoChat
   }
 }
 
@@ -51,22 +55,31 @@ export const translations: Record<Language, Record<string, string>> = {
     'fileUpload.pageInfo': 'Page {current} of {total}',
     'fileUpload.delete': 'Delete',
     'fileUpload.fetchFailed': 'Failed to fetch files',
-    'fileUpload.pdfProcessing': 'Processing and splitting files may take a while...',
-    'fileUpload.pdfSuccess': 'Files uploaded and processed successfully!',
-    'fileUpload.xmlProcessing': 'Processing XML...',
-    'fileUpload.xmlSuccess': 'XML files uploaded successfully!',
+    'fileUpload.pdfProcessing': 'Files are being processed, this may take a while...',
+    'fileUpload.pdfSuccess': 'Files processed and uploaded successfully!',
+    'fileUpload.xmlProcessing': 'Files are being processed, this may take a while...',
+    'fileUpload.xmlSuccess': 'Files processed and uploaded successfully!',
     'fileUpload.uploadError': 'An error occurred during upload',
-    'fileUpload.deleteAllConfirm':
-      'Do you really want to delete all files and documents? This action cannot be undone.',
-    'fileUpload.deletingAll': 'Deleting files and documents...',
-    'fileUpload.deleteAllSuccess': 'Files and documents deleted!',
-    'fileUpload.deleteAllFailed': 'Failed to delete files and documents',
-    'fileUpload.deleteError': 'Error deleting files and documents:',
+    'fileUpload.deleteAllConfirm': 'Do you really want to delete all files? This action cannot be undone.',
+    'fileUpload.deletingAll': 'Deleting files...',
+    'fileUpload.deleteAllSuccess': 'Files deleted!',
+    'fileUpload.deleteAllFailed': 'Failed to delete the files',
+    'fileUpload.deleteError': 'Error deleting the files:',
     'fileUpload.unexpectedError': 'An unexpected error occurred while deleting files.',
-    'fileUpload.deleteSingleConfirm': 'Do you really want to delete {filename} and all related documents?',
+    'fileUpload.deleteSingleConfirm': 'Do you really want to delete {filename}?',
     'fileUpload.deletingSingle': 'Deleting {filename}...',
-    'fileUpload.deleteSingleSuccess': 'File "{filename}" and related documents deleted!',
+    'fileUpload.deleteSingleSuccess': 'File "{filename}" deleted!',
     'fileUpload.deleteSingleFailed': 'Could not delete "{filename}"',
+
+    'fileUpload.processingComplete': 'Files processed and uploaded successfully!',
+    'fileUpload.activeJobs': 'Processing {count} files in background...',
+    'fileUpload.pdfBgProcessing': 'PDF processing started in background',
+    'fileUpload.xmlBgProcessing': 'XML processing started in background',
+    // 'fileUpload.processingComplete': 'File processing completed',
+    'fileUpload.activeJobsTooltip': 'Processing {count} files in background',
+    'fileUpload.noActiveJobs': 'No active background jobs',
+    'fileUpload.progress': 'Progress',
+    'fileUpload.filesProcessing': 'Files are being processed...',
 
     // Chat component translations
     'chat.title': 'Ask me a question!',
@@ -215,22 +228,31 @@ export const translations: Record<Language, Record<string, string>> = {
     'fileUpload.pageInfo': 'Seite {current} von {total}',
     'fileUpload.delete': 'Löschen',
     'fileUpload.fetchFailed': 'Abrufen der Dateien fehlgeschlagen',
-    'fileUpload.pdfProcessing': 'Das Verarbeiten und Aufteilen von Dateien kann eine Weile dauern...',
-    'fileUpload.pdfSuccess': 'Dateien erfolgreich hochgeladen und verarbeitet!',
-    'fileUpload.xmlProcessing': 'XML wird verarbeitet...',
-    'fileUpload.xmlSuccess': 'XML-Dateien erfolgreich hochgeladen!',
+    'fileUpload.pdfProcessing': 'Dateien werden verarbeitet, dies kann eine Weile dauern...',
+    'fileUpload.pdfSuccess': 'Dateien erfolgreich verarbeitet und hochgeladen!',
+    'fileUpload.xmlProcessing': 'Dateien werden verarbeitet, dies kann eine Weile dauern...',
+    'fileUpload.xmlSuccess': 'Dateien erfolgreich verarbeitet und hochgeladen!',
     'fileUpload.uploadError': 'Beim Hochladen ist ein Fehler aufgetreten',
     'fileUpload.deleteAllConfirm':
-      'Möchten Sie Dateien und Dokumente wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden.',
-    'fileUpload.deletingAll': 'Dateien und Dokumente werden gelöscht...',
-    'fileUpload.deleteAllSuccess': 'Dateien und Dokumente wurden gelöscht!',
-    'fileUpload.deleteAllFailed': 'Das Löschen von Dateien und Dokumenten ist fehlgeschlagen',
-    'fileUpload.deleteError': 'Fehler beim Löschen von Dateien und Dokumenten:',
-    'fileUpload.unexpectedError': 'Beim Löschen von Dateien ist ein unerwarteter Fehler aufgetreten.',
-    'fileUpload.deleteSingleConfirm': 'Möchten Sie {filename} und alle zugehörigen Dokumente wirklich löschen?',
+      'Möchten Sie wirklich alle Dateien löschen? Diese Aktion kann nicht rückgängig gemacht werden.',
+    'fileUpload.deletingAll': 'Dateien werden gelöscht...',
+    'fileUpload.deleteAllSuccess': 'Dateien gelöscht!',
+    'fileUpload.deleteAllFailed': 'Fehler beim Löschen der Dateien',
+    'fileUpload.deleteError': 'Fehler beim Löschen der Dateien:',
+    'fileUpload.unexpectedError': 'Ein unerwarteter Fehler ist beim Löschen der Dateien aufgetreten.',
+    'fileUpload.deleteSingleConfirm': 'Möchten Sie wirklich {filename} löschen?',
     'fileUpload.deletingSingle': '{filename} wird gelöscht...',
-    'fileUpload.deleteSingleSuccess': 'Datei „{filename}“ und zugehörige Dokumente wurden gelöscht!',
-    'fileUpload.deleteSingleFailed': '„{filename}“ konnte nicht gelöscht werden',
+    'fileUpload.deleteSingleSuccess': 'Datei "{filename}" gelöscht!',
+    'fileUpload.deleteSingleFailed': 'Konnte "{filename}" nicht löschen',
+
+    'fileUpload.processingComplete': 'Dateien erfolgreich verarbeitet und hochgeladen!',
+    'fileUpload.activeJobs': 'Verarbeite {count} Dateien im Hintergrund...',
+    'fileUpload.pdfBgProcessing': 'PDF-Verarbeitung im Hintergrund gestartet',
+    'fileUpload.xmlBgProcessing': 'XML-Verarbeitung im Hintergrund gestartet',
+    'fileUpload.activeJobsTooltip': '{count} Datei(en) werden im Hintergrund verarbeitet',
+    'fileUpload.noActiveJobs': 'Keine aktiven Hintergrundjobs',
+    'fileUpload.progress': 'Fortschritt',
+    'fileUpload.filesProcessing': 'Dateien werden verarbeitet...',
 
     // Chat component translations
     'chat.title': 'Stell mir eine Frage!',

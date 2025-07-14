@@ -9,9 +9,24 @@ import { FILTER_FIELD } from '../../constants/variables'
 import './FileUpload.css'
 import { useAppUser } from '../../state/AppUserProvider'
 import { useLanguage } from '../../state/LanguageContext'
+import { useBackgroundJobs } from '../../state/BackgroundJobsContext'
+
+// Job status types
+type JobStatus = 'queued' | 'processing' | 'completed' | 'failed'
 
 interface FileUploadResponse {
   files: string[]
+}
+
+interface JobStatusResponse {
+  job_id: string
+  status: JobStatus
+  result?: {
+    processed_files: string[]
+    skipped_files: string[]
+  }
+  error?: string
+  timestamp: string
 }
 
 const FileUpload: React.FC = () => {
@@ -19,6 +34,7 @@ const FileUpload: React.FC = () => {
   const AUTH_ENABLED = appStateContext?.state.frontendSettings?.auth_enabled
   const { userInfo, authEnabled } = useAppUser()
   const { t } = useLanguage()
+  const { addJob, updateJob, removeJob } = useBackgroundJobs()
 
   /* ------------------------------------------------------------------ */
   /*  state                                                             */
@@ -103,6 +119,53 @@ const FileUpload: React.FC = () => {
   }
 
   /* ------------------------------------------------------------------ */
+  /*  Job Polling Helper                                                */
+  /* ------------------------------------------------------------------ */
+  const startJobPolling = (job_id: string, fileType: 'pdf' | 'xml', filenames: string[]) => {
+    const poll = async () => {
+      try {
+        const { data } = await axios.get<JobStatusResponse>(`/pipeline/job_status/${job_id}`)
+
+        // Update job status in global context
+        updateJob(job_id, {
+          status: data.status,
+          progress: data.result?.processed_files?.length || 0,
+          total: (data.result?.processed_files?.length || 0) + (data.result?.skipped_files?.length || 0)
+        })
+
+        if (data.status === 'completed' || data.status === 'failed') {
+          // REMOVED THE TOAST HERE - NAVBAR WILL HANDLE IT
+          if (data.status === 'completed') {
+            fetchFiles()
+          }
+
+          // Remove job after delay to show completion
+          setTimeout(() => removeJob(job_id), 5000)
+        } else {
+          // Continue polling
+          setTimeout(poll, 3000)
+        }
+      } catch (error) {
+        console.error('Error polling job status:', error)
+        setTimeout(poll, 3000)
+      }
+    }
+
+    // Add job to global context
+    addJob({
+      job_id,
+      status: 'queued',
+      fileType,
+      filenames,
+      progress: 0,
+      total: filenames.length
+    })
+
+    // Start polling
+    poll()
+  }
+
+  /* ------------------------------------------------------------------ */
   /*  PDF upload                                                        */
   /* ------------------------------------------------------------------ */
   const handleUploadPdf = async () => {
@@ -123,28 +186,28 @@ const FileUpload: React.FC = () => {
     Array.from(newFiles).forEach(file => formData.append('files', file))
     formData.append('organization', organization)
 
-    const uploadPromise = axios.post<FileUploadResponse>('/pipeline/upload', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' }
-    })
-
-    toast.promise(uploadPromise, {
-      pending: t('fileUpload.pdfProcessing'),
-      success: t('fileUpload.pdfSuccess'),
-      error: t('fileUpload.uploadError')
-    })
-
     try {
-      await uploadPromise
-      setNewFiles(null)
+      const { data } = await axios.post<{ job_id: string }>('/pipeline/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+
+      // Get filenames for notification
+      const filenames = Array.from(newFiles).map(f => f.name)
+
+      // Start job tracking
+      startJobPolling(data.job_id, 'pdf', filenames)
+      toast.info(t('fileUpload.pdfProcessing'))
+    } catch (error) {
+      toast.error(t('fileUpload.uploadError'))
     } finally {
       setUploading(false)
+      setNewFiles(null)
       ;(document.getElementById('file-input') as HTMLInputElement).value = ''
-      fetchFiles()
     }
   }
 
   /* ------------------------------------------------------------------ */
-  /*  XML upload – NEW                                                  */
+  /*  XML upload                                                        */
   /* ------------------------------------------------------------------ */
   const handleUploadXml = async () => {
     if (!newFiles?.length) {
@@ -164,23 +227,23 @@ const FileUpload: React.FC = () => {
     Array.from(newFiles).forEach(file => formData.append('files', file))
     formData.append('organization', organization)
 
-    const uploadPromise = axios.post<FileUploadResponse>('/pipeline/upload_xml', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' }
-    })
-
-    toast.promise(uploadPromise, {
-      pending: t('fileUpload.xmlProcessing'),
-      success: t('fileUpload.xmlSuccess'),
-      error: t('fileUpload.uploadError')
-    })
-
     try {
-      await uploadPromise
-      setNewFiles(null)
+      const { data } = await axios.post<{ job_id: string }>('/pipeline/upload_xml', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+
+      // Get filenames for notification
+      const filenames = Array.from(newFiles).map(f => f.name)
+
+      // Start job tracking
+      startJobPolling(data.job_id, 'xml', filenames)
+      toast.info(t('fileUpload.xmlProcessing'))
+    } catch (error) {
+      toast.error(t('fileUpload.uploadError'))
     } finally {
       setUploading(false)
+      setNewFiles(null)
       ;(document.getElementById('file-input') as HTMLInputElement).value = ''
-      fetchFiles()
     }
   }
 

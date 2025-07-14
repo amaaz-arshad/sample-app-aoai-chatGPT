@@ -18,6 +18,7 @@ import History from './pages/history/History'
 import SystemMessage from './pages/systemMessage/SystemMessage'
 import { AppUserProvider } from './state/AppUserProvider'
 import { LanguageProvider } from './state/LanguageContext'
+import { BackgroundJobsProvider } from './state/BackgroundJobsContext'
 
 initializeIcons('https://res.cdn.office.net/files/fabric-cdn-prod_20240129.001/assets/icons/')
 
@@ -26,17 +27,19 @@ export default function App() {
     <AppStateProvider>
       <LanguageProvider>
         <AppUserProvider>
-          <HashRouter>
-            <Routes>
-              <Route path="/" element={<Layout />}>
-                <Route index element={<Chat />} />
-                <Route path="*" element={<NoPage />} />
-              </Route>
-              <Route path="/upload-files" element={<FileUpload />} />
-              <Route path="/history" element={<History />} />
-              <Route path="/system-message" element={<SystemMessage />} />
-            </Routes>
-          </HashRouter>
+          <BackgroundJobsProvider>
+            <HashRouter>
+              <Routes>
+                <Route path="/" element={<Layout />}>
+                  <Route index element={<Chat />} />
+                  <Route path="*" element={<NoPage />} />
+                </Route>
+                <Route path="/upload-files" element={<FileUpload />} />
+                <Route path="/history" element={<History />} />
+                <Route path="/system-message" element={<SystemMessage />} />
+              </Routes>
+            </HashRouter>
+          </BackgroundJobsProvider>
         </AppUserProvider>
       </LanguageProvider>
     </AppStateProvider>

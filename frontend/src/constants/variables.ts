@@ -6,6 +6,7 @@ import vjoonNav from '../assets/vjoon-nav.svg'
 import vjoonChat from '../assets/vjoon-chat.png'
 import agindoNav from '../assets/agindo-nav.png'
 import agindoChat from '../assets/agindo-chat.png'
+import pinkvoss from '../assets/pinkvoss.png'
 
 export const FILTER_FIELD = 'city'
 export const FILTER_FIELD2 = 'streetAddress'
@@ -16,14 +17,16 @@ export const logos = {
     publishone: publishOneNav,
     vjoon: vjoonNav,
     'vjoon k4': vjoonNav,
-    agindo: agindoNav
+    agindo: agindoNav,
+    pinkvoss: pinkvoss
   },
   chat: {
     default: SnapLogo,
     publishone: publishOneChat,
     vjoon: vjoonChat,
     'vjoon k4': vjoonChat,
-    agindo: agindoChat
+    agindo: agindoChat,
+    pinkvoss: pinkvoss
   }
 }
 

@@ -5,14 +5,18 @@ import { logos } from '../../constants/variables'
 
 export default function Navbar() {
   const { t, language, setLanguage } = useLanguage()
-
-  // Show completion notifications
-  useEffect(() => {
-    // Toast logic remains if needed elsewhere
-  }, [])
-
   const navbarLogos = logos.navbar as Record<string, string>
-  const logoSrc = navbarLogos['publishone'] || navbarLogos.default
+
+  // Dynamically extract organization from subdomain
+  const getOrganizationFromHost = () => {
+    const hostParts = window.location.hostname.split('.')
+    console.log('Host parts in navbar:', hostParts)
+    return hostParts.length >= 4 ? hostParts[0] : 'default'
+  }
+
+  const organization = getOrganizationFromHost()
+  console.log('Organization in navbar:', organization)
+  const logoSrc = navbarLogos[organization] || navbarLogos.default
 
   return (
     <>

@@ -417,17 +417,18 @@ async def prepare_model_args(request_body, request_headers):
             companyName = companyName.strip().lower().strip('.')
             data_source_config["parameters"]["filter"] = f"organization eq '{companyName}'"
 
-        # public_base_url = request.url_root.rstrip("/")
-        
+        # Ensure the base URL is HTTPS
+        public_base_url = request.url_root.rstrip("/").replace("http://", "https://")
+
         data_source_config["parameters"]["embedding_dependency"] = {
             "type": "endpoint",
-            "endpoint": app_settings.azure_openai.embedding_endpoint,
+            "endpoint": f"{public_base_url}/api/embed",
             "authentication": {
                 "type": "api_key",
                 "key": f"{authenticated_user['auth_token']}",
             }
         }
-        
+
         # Store the configuration into the extra_body
         model_args["extra_body"] = {
             "data_sources": [

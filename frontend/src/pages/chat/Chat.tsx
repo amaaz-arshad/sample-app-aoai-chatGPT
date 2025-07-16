@@ -72,7 +72,12 @@ const Chat = () => {
   const [logo, setLogo] = useState('')
   const [answerId, setAnswerId] = useState<string>('')
   // const [userDetails, setUserDetails] = useState<UserInfo[]>([])
-  const [organization, setOrganization] = useState('publishone')
+  const [organization, setOrganization] = useState(() => {
+    const hostParts = window.location.hostname.split('.')
+    console.log('Host parts in chat:', hostParts)
+    return hostParts.length >= 4 ? hostParts[0] : 'default'
+  })
+  console.log('Organization in chat:', organization)
   const { t } = useLanguage()
   const { userInfo } = useAppUser()
 

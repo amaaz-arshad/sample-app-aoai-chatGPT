@@ -412,8 +412,7 @@ async def prepare_model_args(request_body, request_headers):
         # public_base_url = request.url_root.rstrip("/")
         data_source_config["parameters"]["embedding_dependency"] = {
             "type": "endpoint",
-            # "endpoint": app_settings.azure_openai.embedding_endpoint,
-            "endpoint": " https://03b1b70e7023.ngrok-free.app/api/embed",
+            "endpoint": app_settings.azure_openai.embedding_endpoint,
             "authentication": {
                 "type": "api_key",
                 "key": f"{authenticated_user['auth_token']}",

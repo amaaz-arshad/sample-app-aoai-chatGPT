@@ -29,6 +29,7 @@ export const logos = {
 
 export const translations: Record<Language, Record<string, string>> = {
   en: {
+    'navbar.chatbotBySnap': 'Chatbot by SNAP',
     // Navbar
     'navbar.chatbot': 'Chatbot',
     'navbar.uploadFiles': 'Upload Files',
@@ -202,6 +203,7 @@ export const translations: Record<Language, Record<string, string>> = {
     hide: 'Hide'
   },
   de: {
+    'navbar.chatbotBySnap': 'Chatbot von SNAP',
     // Navbar
     'navbar.chatbot': 'Chatbot',
     'navbar.uploadFiles': 'Dateien hochladen',

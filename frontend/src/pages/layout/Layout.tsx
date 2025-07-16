@@ -72,26 +72,7 @@ const Layout = () => {
     <>
       <div className={styles.layout}>
         <Navbar />
-        <header className={styles.header} role={'banner'}>
-          <Stack horizontal verticalAlign="center" horizontalAlign="space-between">
-            <Stack horizontal verticalAlign="center">
-              {/* <img src={logo} className={styles.headerIcon} aria-hidden="true" alt="" /> */}
-              {/* <Link to="/" className={styles.headerTitleContainer}>
-                <h1 className={styles.headerTitle}>{ui?.title}</h1>
-              </Link> */}
-            </Stack>
-            <Stack horizontal tokens={{ childrenGap: 4 }} className={styles.shareButtonContainer}>
-              {appStateContext?.state.isCosmosDBAvailable?.status !== CosmosDBStatus.NotConfigured &&
-                ui?.show_chat_history_button !== false && (
-                  <HistoryButton
-                    onClick={handleHistoryClick}
-                    text={appStateContext?.state?.isChatHistoryOpen ? hideHistoryLabel : showHistoryLabel}
-                  />
-                )}
-              {/* {ui?.show_share_button && <ShareButton onClick={handleShareClick} text={shareLabel} />} */}
-            </Stack>
-          </Stack>
-        </header>
+        <div className="mt-2" />
         <Outlet />
         <Dialog
           onDismiss={handleSharePanelDismiss}

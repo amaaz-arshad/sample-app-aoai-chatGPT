@@ -21,8 +21,6 @@ pydantic
 requests
 azure-core
 python-multipart
-pymupdf4llm
-llama-index
 sentence-transformers
 pdfminer.six
 PyMuPDF

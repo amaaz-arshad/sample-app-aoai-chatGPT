@@ -34,9 +34,9 @@ export default function App() {
                   <Route index element={<Chat />} />
                   <Route path="*" element={<NoPage />} />
                 </Route>
-                <Route path="/upload-files" element={<FileUpload />} />
+                {/* <Route path="/upload-files" element={<FileUpload />} />
                 <Route path="/history" element={<History />} />
-                <Route path="/system-message" element={<SystemMessage />} />
+                <Route path="/system-message" element={<SystemMessage />} /> */}
               </Routes>
             </HashRouter>
           </BackgroundJobsProvider>

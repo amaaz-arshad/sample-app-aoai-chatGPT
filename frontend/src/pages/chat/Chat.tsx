@@ -62,7 +62,7 @@ const Chat = () => {
   const [isCitationPanelOpen, setIsCitationPanelOpen] = useState<boolean>(false)
   const [isIntentsPanelOpen, setIsIntentsPanelOpen] = useState<boolean>(false)
   const abortFuncs = useRef([] as AbortController[])
-  const [showAuthMessage, setShowAuthMessage] = useState<boolean | undefined>()
+  // const [showAuthMessage, setShowAuthMessage] = useState<boolean | undefined>()
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [execResults, setExecResults] = useState<ExecResults[]>([])
   const [processMessages, setProcessMessages] = useState<messageStatus>(messageStatus.NotRunning)
@@ -71,8 +71,8 @@ const Chat = () => {
   const [errorMsg, setErrorMsg] = useState<ErrorMessage | null>()
   const [logo, setLogo] = useState('')
   const [answerId, setAnswerId] = useState<string>('')
-  const [userDetails, setUserDetails] = useState<UserInfo[]>([])
-  const [organization, setOrganization] = useState('')
+  // const [userDetails, setUserDetails] = useState<UserInfo[]>([])
+  const [organization, setOrganization] = useState('publishone')
   const { t } = useLanguage()
   const { userInfo } = useAppUser()
 
@@ -134,32 +134,32 @@ const Chat = () => {
     setIsLoading(appStateContext?.state.chatHistoryLoadingState === ChatHistoryLoadingState.Loading)
   }, [appStateContext?.state.chatHistoryLoadingState])
 
-  const getUserInfoList = async () => {
-    if (!AUTH_ENABLED) {
-      setShowAuthMessage(false)
-      return
-    }
-    const userInfoList = await getUserInfo()
-    const organizationName =
-      Array.isArray(userInfoList) && userInfoList.length > 0 && Array.isArray(userInfoList[0].user_claims)
-        ? userInfoList[0].user_claims.find(claim => claim.typ === FILTER_FIELD)
-        : null
-    const organizationVal =
-      organizationName && organizationName.val
-        ? organizationName.val
-            .trim()
-            .toLowerCase()
-            .replace(/^\.+|\.+$/g, '')
-        : null
-    console.log(userInfoList)
-    console.log('companyname:', organizationVal)
-    setUserDetails(userInfoList)
-    if (userInfoList.length === 0 && window.location.hostname !== '127.0.0.1') {
-      setShowAuthMessage(true)
-    } else {
-      setShowAuthMessage(false)
-    }
-  }
+  // const getUserInfoList = async () => {
+  //   if (!AUTH_ENABLED) {
+  //     setShowAuthMessage(false)
+  //     return
+  //   }
+  //   const userInfoList = await getUserInfo()
+  //   const organizationName =
+  //     Array.isArray(userInfoList) && userInfoList.length > 0 && Array.isArray(userInfoList[0].user_claims)
+  //       ? userInfoList[0].user_claims.find(claim => claim.typ === FILTER_FIELD)
+  //       : null
+  //   const organizationVal =
+  //     organizationName && organizationName.val
+  //       ? organizationName.val
+  //           .trim()
+  //           .toLowerCase()
+  //           .replace(/^\.+|\.+$/g, '')
+  //       : null
+  //   console.log(userInfoList)
+  //   console.log('companyname:', organizationVal)
+  //   setUserDetails(userInfoList)
+  //   if (userInfoList.length === 0 && window.location.hostname !== '127.0.0.1') {
+  //     setShowAuthMessage(true)
+  //   } else {
+  //     setShowAuthMessage(false)
+  //   }
+  // }
 
   let assistantMessage = {} as ChatMessage
   let toolMessage = {} as ChatMessage
@@ -215,13 +215,13 @@ const Chat = () => {
   }
 
   const makeApiRequestWithoutCosmosDB = async (question: ChatMessage['content'], conversationId?: string) => {
-    if (userDetails?.[0]?.id_token && isIdTokenExpired(userDetails[0].id_token)) {
-      toast.error(t('chat.sessionExpired'))
-      setTimeout(() => {
-        window.location.href = '/.auth/logout'
-      }, 2000)
-      return
-    }
+    // if (userDetails?.[0]?.id_token && isIdTokenExpired(userDetails[0].id_token)) {
+    //   toast.error(t('chat.sessionExpired'))
+    //   setTimeout(() => {
+    //     window.location.href = '/.auth/logout'
+    //   }, 2000)
+    //   return
+    // }
     setIsLoading(true)
     setShowLoadingMessage(true)
     const abortController = new AbortController()
@@ -268,7 +268,8 @@ const Chat = () => {
     setMessages(conversation.messages)
 
     const request: ConversationRequest = {
-      messages: [...conversation.messages.filter(answer => answer.role !== ERROR)]
+      messages: [...conversation.messages.filter(answer => answer.role !== ERROR)],
+      companyName: organization
     }
 
     let result = {} as ChatResponse
@@ -367,13 +368,13 @@ const Chat = () => {
   }
 
   const makeApiRequestWithCosmosDB = async (question: ChatMessage['content'], conversationId?: string) => {
-    if (userDetails?.[0]?.id_token && isIdTokenExpired(userDetails[0].id_token)) {
-      toast.error(t('chat.sessionExpired'))
-      setTimeout(() => {
-        window.location.href = '/.auth/logout'
-      }, 2000)
-      return
-    }
+    // if (userDetails?.[0]?.id_token && isIdTokenExpired(userDetails[0].id_token)) {
+    //   toast.error(t('chat.sessionExpired'))
+    //   setTimeout(() => {
+    //     window.location.href = '/.auth/logout'
+    //   }, 2000)
+    //   return
+    // }
 
     setIsLoading(true)
     setShowLoadingMessage(true)
@@ -764,9 +765,9 @@ const Chat = () => {
     }
   }, [processMessages])
 
-  useEffect(() => {
-    if (AUTH_ENABLED !== undefined) getUserInfoList()
-  }, [AUTH_ENABLED])
+  // useEffect(() => {
+  //   if (AUTH_ENABLED !== undefined) getUserInfoList()
+  // }, [AUTH_ENABLED])
 
   useLayoutEffect(() => {
     chatMessageStreamEnd.current?.scrollIntoView({ behavior: 'smooth' })
@@ -832,171 +833,118 @@ const Chat = () => {
 
   return (
     <div className={styles.container} role="main">
-      {showAuthMessage ? (
-        <Stack className={styles.chatEmptyState}>
-          <ShieldLockRegular
-            className={styles.chatIcon}
-            style={{ color: 'darkorange', height: '200px', width: '200px' }}
-          />
-          <h1 className={styles.chatEmptyStateTitle}>{t('auth.notConfiguredTitle')}</h1>
-          <h2 className={styles.chatEmptyStateSubtitle}>
-            {t('auth.notConfiguredSubtitle1')}{' '}
-            <a href="https://portal.azure.com/" target="_blank">
-              {t('auth.azurePortal')}
-            </a>{' '}
-            {t('auth.notConfiguredSubtitle2')}{' '}
-            <a
-              href="https://learn.microsoft.com/en-us/azure/app-service/scenario-secure-app-authentication-app-service#3-configure-authentication-and-authorization"
-              target="_blank">
-              {t('auth.instructions')}
-            </a>
-            {t('auth.notConfiguredSubtitle3')}
-          </h2>
-          <h2 className={styles.chatEmptyStateSubtitle} style={{ fontSize: '20px' }}>
-            <strong>{t('auth.configNote1')}</strong>
-          </h2>
-          <h2 className={styles.chatEmptyStateSubtitle} style={{ fontSize: '20px' }}>
-            <strong>{t('auth.configNote2')}</strong>
-          </h2>
-        </Stack>
-      ) : (
-        <Stack horizontal className={styles.chatRoot}>
-          <div className={styles.chatContainer}>
-            {!messages || messages.length < 1 ? (
-              <Stack className={styles.chatEmptyState}>
-                <img
-                  src={logoSrc}
-                  className={styles.chatIcon}
-                  aria-hidden="true"
-                  style={{ visibility: isAuthLoading ? 'hidden' : 'visible' }}
-                />
-                <h1 className={styles.chatEmptyStateTitle}>{t('chat.title')}</h1>
-                <h2 className={styles.chatEmptyStateSubtitle}>{t('chat.subtitle')}</h2>
-              </Stack>
-            ) : (
-              <div className={styles.chatMessageStream} style={{ marginBottom: isLoading ? '40px' : '0px' }} role="log">
-                {messages.map((answer, index) => (
-                  <>
-                    {answer.role === 'user' ? (
-                      <div className={styles.chatMessageUser} tabIndex={0}>
-                        <div className={styles.chatMessageUserMessage}>
-                          {typeof answer.content === 'string' && answer.content ? (
-                            answer.content
-                          ) : Array.isArray(answer.content) ? (
-                            <>
-                              {answer.content[0].text}{' '}
-                              <img
-                                className={styles.uploadedImageChat}
-                                src={answer.content[1].image_url.url}
-                                alt="Uploaded Preview"
-                              />
-                            </>
-                          ) : null}
-                        </div>
+      <Stack horizontal className={styles.chatRoot}>
+        <div className={styles.chatContainer}>
+          {!messages || messages.length < 1 ? (
+            <Stack className={styles.chatEmptyState}>
+              <img
+                src={logoSrc}
+                className={styles.chatIcon}
+                aria-hidden="true"
+                style={{ visibility: isAuthLoading ? 'hidden' : 'visible' }}
+              />
+              <h1 className={styles.chatEmptyStateTitle}>{t('chat.title')}</h1>
+              <h2 className={styles.chatEmptyStateSubtitle}>{t('chat.subtitle')}</h2>
+            </Stack>
+          ) : (
+            <div className={styles.chatMessageStream} style={{ marginBottom: isLoading ? '40px' : '0px' }} role="log">
+              {messages.map((answer, index) => (
+                <>
+                  {answer.role === 'user' ? (
+                    <div className={styles.chatMessageUser} tabIndex={0}>
+                      <div className={styles.chatMessageUserMessage}>
+                        {typeof answer.content === 'string' && answer.content ? (
+                          answer.content
+                        ) : Array.isArray(answer.content) ? (
+                          <>
+                            {answer.content[0].text}{' '}
+                            <img
+                              className={styles.uploadedImageChat}
+                              src={answer.content[1].image_url.url}
+                              alt="Uploaded Preview"
+                            />
+                          </>
+                        ) : null}
                       </div>
-                    ) : answer.role === 'assistant' ? (
-                      <div className={styles.chatMessageGpt}>
-                        {typeof answer.content === 'string' && (
-                          <Answer
-                            answer={{
-                              answer: answer.content,
-                              citations: parseCitationFromMessage(messages[index - 1]),
-                              generated_chart: parsePlotFromMessage(messages[index - 1]),
-                              message_id: answer.id,
-                              feedback: answer.feedback,
-                              exec_results: execResults,
-                              organization: organization
-                            }}
-                            onCitationClicked={c => onShowCitation(c)}
-                            onExectResultClicked={() => onShowExecResult(answerId)}
-                            sendFollowupQuestion={question => {
-                              makeApiRequestWithCosmosDB(
-                                question,
-                                appStateContext?.state.currentChat?.id
-                                  ? appStateContext?.state.currentChat?.id
-                                  : undefined
-                              )
-                            }}
-                          />
-                        )}
-                      </div>
-                    ) : answer.role === ERROR ? (
-                      <div className={styles.chatMessageError}>
-                        <Stack horizontal className={styles.chatMessageErrorContent}>
-                          <ErrorCircleRegular className={styles.errorIcon} style={{ color: 'rgba(182, 52, 67, 1)' }} />
-                          <span>{t('chat.error')}</span>
-                        </Stack>
-                        <span className={styles.chatMessageErrorContent}>
-                          {typeof answer.content === 'string' && answer.content}
-                        </span>
-                      </div>
-                    ) : null}
-                  </>
-                ))}
-                {showLoadingMessage && (
-                  <>
-                    <div className={styles.chatMessageGpt}>
-                      <Answer
-                        answer={{
-                          answer: t('chat.generatingAnswer'),
-                          citations: [],
-                          generated_chart: null,
-                          organization: organization
-                        }}
-                        onCitationClicked={() => null}
-                        onExectResultClicked={() => null}
-                        sendFollowupQuestion={() => null}
-                      />
                     </div>
-                  </>
-                )}
-                <div ref={chatMessageStreamEnd} />
-              </div>
-            )}
-
-            <Stack horizontal className={styles.chatInput}>
-              {isLoading && messages.length > 0 && (
-                <Stack
-                  horizontal
-                  className={styles.stopGeneratingContainer}
-                  role="button"
-                  aria-label={t('chat.stopGenerating')}
-                  tabIndex={0}
-                  onClick={stopGenerating}
-                  onKeyDown={e => (e.key === 'Enter' || e.key === ' ' ? stopGenerating() : null)}>
-                  <SquareRegular className={styles.stopGeneratingIcon} aria-hidden="true" />
-                  <span className={styles.stopGeneratingText} aria-hidden="true">
-                    {t('chat.stopGenerating')}
-                  </span>
-                </Stack>
+                  ) : answer.role === 'assistant' ? (
+                    <div className={styles.chatMessageGpt}>
+                      {typeof answer.content === 'string' && (
+                        <Answer
+                          answer={{
+                            answer: answer.content,
+                            citations: parseCitationFromMessage(messages[index - 1]),
+                            generated_chart: parsePlotFromMessage(messages[index - 1]),
+                            message_id: answer.id,
+                            feedback: answer.feedback,
+                            exec_results: execResults,
+                            organization: organization
+                          }}
+                          onCitationClicked={c => onShowCitation(c)}
+                          onExectResultClicked={() => onShowExecResult(answerId)}
+                          sendFollowupQuestion={question => {
+                            makeApiRequestWithCosmosDB(
+                              question,
+                              appStateContext?.state.currentChat?.id
+                                ? appStateContext?.state.currentChat?.id
+                                : undefined
+                            )
+                          }}
+                        />
+                      )}
+                    </div>
+                  ) : answer.role === ERROR ? (
+                    <div className={styles.chatMessageError}>
+                      <Stack horizontal className={styles.chatMessageErrorContent}>
+                        <ErrorCircleRegular className={styles.errorIcon} style={{ color: 'rgba(182, 52, 67, 1)' }} />
+                        <span>{t('chat.error')}</span>
+                      </Stack>
+                      <span className={styles.chatMessageErrorContent}>
+                        {typeof answer.content === 'string' && answer.content}
+                      </span>
+                    </div>
+                  ) : null}
+                </>
+              ))}
+              {showLoadingMessage && (
+                <>
+                  <div className={styles.chatMessageGpt}>
+                    <Answer
+                      answer={{
+                        answer: t('chat.generatingAnswer'),
+                        citations: [],
+                        generated_chart: null,
+                        organization: organization
+                      }}
+                      onCitationClicked={() => null}
+                      onExectResultClicked={() => null}
+                      sendFollowupQuestion={() => null}
+                    />
+                  </div>
+                </>
               )}
-              <Stack>
-                {appStateContext?.state.isCosmosDBAvailable?.status !== CosmosDBStatus.NotConfigured && (
-                  <CommandBarButton
-                    role="button"
-                    styles={{
-                      icon: {
-                        color: '#FFFFFF'
-                      },
-                      iconDisabled: {
-                        color: '#BDBDBD !important'
-                      },
-                      root: {
-                        color: '#FFFFFF',
-                        background:
-                          'radial-gradient(109.81% 107.82% at 100.1% 90.19%, #0F6CBD 33.63%, #2D87C3 70.31%, #8DDDD8 100%)'
-                      },
-                      rootDisabled: {
-                        background: '#F0F0F0'
-                      }
-                    }}
-                    className={styles.newChatIcon}
-                    iconProps={{ iconName: 'Add' }}
-                    onClick={newChat}
-                    disabled={disabledButton()}
-                    aria-label={t('chat.newChatButton')}
-                  />
-                )}
+              <div ref={chatMessageStreamEnd} />
+            </div>
+          )}
+
+          <Stack horizontal className={styles.chatInput}>
+            {isLoading && messages.length > 0 && (
+              <Stack
+                horizontal
+                className={styles.stopGeneratingContainer}
+                role="button"
+                aria-label={t('chat.stopGenerating')}
+                tabIndex={0}
+                onClick={stopGenerating}
+                onKeyDown={e => (e.key === 'Enter' || e.key === ' ' ? stopGenerating() : null)}>
+                <SquareRegular className={styles.stopGeneratingIcon} aria-hidden="true" />
+                <span className={styles.stopGeneratingText} aria-hidden="true">
+                  {t('chat.stopGenerating')}
+                </span>
+              </Stack>
+            )}
+            <Stack>
+              {appStateContext?.state.isCosmosDBAvailable?.status !== CosmosDBStatus.NotConfigured && (
                 <CommandBarButton
                   role="button"
                   styles={{
@@ -1015,152 +963,172 @@ const Chat = () => {
                       background: '#F0F0F0'
                     }
                   }}
-                  className={
-                    appStateContext?.state.isCosmosDBAvailable?.status !== CosmosDBStatus.NotConfigured
-                      ? styles.clearChatBroom
-                      : styles.clearChatBroomNoCosmos
-                  }
-                  iconProps={{ iconName: 'Broom' }}
-                  onClick={
-                    appStateContext?.state.isCosmosDBAvailable?.status !== CosmosDBStatus.NotConfigured
-                      ? clearChat
-                      : newChat
-                  }
+                  className={styles.newChatIcon}
+                  iconProps={{ iconName: 'Add' }}
+                  onClick={newChat}
                   disabled={disabledButton()}
-                  aria-label={t('chat.clearChatButton')}
+                  aria-label={t('chat.newChatButton')}
                 />
-                <Dialog
-                  hidden={hideErrorDialog}
-                  onDismiss={handleErrorDialogClose}
-                  dialogContentProps={errorDialogContentProps}
-                  modalProps={modalProps}></Dialog>
-              </Stack>
-              <QuestionInput
-                clearOnSend
-                placeholder={t('chat.inputPlaceholder')}
-                disabled={isLoading}
-                onSend={(question, id) => {
-                  appStateContext?.state.isCosmosDBAvailable?.cosmosDB
-                    ? makeApiRequestWithCosmosDB(question, id)
-                    : makeApiRequestWithoutCosmosDB(question, id)
+              )}
+              <CommandBarButton
+                role="button"
+                styles={{
+                  icon: {
+                    color: '#FFFFFF'
+                  },
+                  iconDisabled: {
+                    color: '#BDBDBD !important'
+                  },
+                  root: {
+                    color: '#FFFFFF',
+                    background:
+                      'radial-gradient(109.81% 107.82% at 100.1% 90.19%, #0F6CBD 33.63%, #2D87C3 70.31%, #8DDDD8 100%)'
+                  },
+                  rootDisabled: {
+                    background: '#F0F0F0'
+                  }
                 }}
-                conversationId={
-                  appStateContext?.state.currentChat?.id ? appStateContext?.state.currentChat?.id : undefined
+                className={
+                  appStateContext?.state.isCosmosDBAvailable?.status !== CosmosDBStatus.NotConfigured
+                    ? styles.clearChatBroom
+                    : styles.clearChatBroomNoCosmos
                 }
+                iconProps={{ iconName: 'Broom' }}
+                onClick={
+                  appStateContext?.state.isCosmosDBAvailable?.status !== CosmosDBStatus.NotConfigured
+                    ? clearChat
+                    : newChat
+                }
+                disabled={disabledButton()}
+                aria-label={t('chat.clearChatButton')}
+              />
+              <Dialog
+                hidden={hideErrorDialog}
+                onDismiss={handleErrorDialogClose}
+                dialogContentProps={errorDialogContentProps}
+                modalProps={modalProps}></Dialog>
+            </Stack>
+            <QuestionInput
+              clearOnSend
+              placeholder={t('chat.inputPlaceholder')}
+              disabled={isLoading}
+              onSend={(question, id) => {
+                appStateContext?.state.isCosmosDBAvailable?.cosmosDB
+                  ? makeApiRequestWithCosmosDB(question, id)
+                  : makeApiRequestWithoutCosmosDB(question, id)
+              }}
+              conversationId={
+                appStateContext?.state.currentChat?.id ? appStateContext?.state.currentChat?.id : undefined
+              }
+            />
+          </Stack>
+        </div>
+        {/* Citation Panel */}
+        {messages && messages.length > 0 && isCitationPanelOpen && activeCitation && (
+          <Stack.Item
+            className={styles.citationPanel}
+            tabIndex={0}
+            role="tabpanel"
+            aria-label={t('chat.citationsPanel')}>
+            <Stack
+              aria-label={t('chat.citationsPanelHeader')}
+              horizontal
+              className={styles.citationPanelHeaderContainer}
+              horizontalAlign="space-between"
+              verticalAlign="center">
+              <span aria-label={t('chat.citations')} className={styles.citationPanelHeader}>
+                {t('chat.citations')}
+              </span>
+              <IconButton
+                iconProps={{ iconName: 'Cancel' }}
+                aria-label={t('chat.closeCitationsPanel')}
+                onClick={() => setIsCitationPanelOpen(false)}
               />
             </Stack>
-          </div>
-          {/* Citation Panel */}
-          {messages && messages.length > 0 && isCitationPanelOpen && activeCitation && (
-            <Stack.Item
-              className={styles.citationPanel}
+            <h5
+              className={styles.citationPanelTitle}
               tabIndex={0}
-              role="tabpanel"
-              aria-label={t('chat.citationsPanel')}>
-              <Stack
-                aria-label={t('chat.citationsPanelHeader')}
-                horizontal
-                className={styles.citationPanelHeaderContainer}
-                horizontalAlign="space-between"
-                verticalAlign="center">
-                <span aria-label={t('chat.citations')} className={styles.citationPanelHeader}>
-                  {t('chat.citations')}
-                </span>
-                <IconButton
-                  iconProps={{ iconName: 'Cancel' }}
-                  aria-label={t('chat.closeCitationsPanel')}
-                  onClick={() => setIsCitationPanelOpen(false)}
-                />
-              </Stack>
-              <h5
-                className={styles.citationPanelTitle}
-                tabIndex={0}
-                title={
-                  activeCitation.url && !activeCitation.url.includes('blob.core')
-                    ? activeCitation.url
-                    : activeCitation.title ?? ''
-                }
-                onClick={() => onViewSource(activeCitation)}>
-                {activeCitation.title}
-              </h5>
-              <div tabIndex={0}>
-                <ReactMarkdown
-                  linkTarget="_blank"
-                  className={styles.citationPanelContent}
-                  children={DOMPurify.sanitize(activeCitation.content, { ALLOWED_TAGS: XSSAllowTags })}
-                  remarkPlugins={[remarkGfm]}
-                  rehypePlugins={[rehypeRaw]}
-                />
-              </div>
-            </Stack.Item>
-          )}
-          {messages && messages.length > 0 && isIntentsPanelOpen && (
-            <Stack.Item
-              className={styles.citationPanel}
-              tabIndex={0}
-              role="tabpanel"
-              aria-label={t('chat.intentsPanel')}>
-              <Stack
-                aria-label={t('chat.intentsPanelHeader')}
-                horizontal
-                className={styles.citationPanelHeaderContainer}
-                horizontalAlign="space-between"
-                verticalAlign="center">
-                <span aria-label={t('chat.intents')} className={styles.citationPanelHeader}>
-                  {t('chat.intents')}
-                </span>
-                <IconButton
-                  iconProps={{ iconName: 'Cancel' }}
-                  aria-label={t('chat.closeIntentsPanel')}
-                  onClick={() => setIsIntentsPanelOpen(false)}
-                />
-              </Stack>
-              <Stack horizontalAlign="space-between">
-                {appStateContext?.state?.answerExecResult[answerId]?.map((execResult: ExecResults, index) => (
-                  <Stack className={styles.exectResultList} verticalAlign="space-between">
+              title={
+                activeCitation.url && !activeCitation.url.includes('blob.core')
+                  ? activeCitation.url
+                  : activeCitation.title ?? ''
+              }
+              onClick={() => onViewSource(activeCitation)}>
+              {activeCitation.title}
+            </h5>
+            <div tabIndex={0}>
+              <ReactMarkdown
+                linkTarget="_blank"
+                className={styles.citationPanelContent}
+                children={DOMPurify.sanitize(activeCitation.content, { ALLOWED_TAGS: XSSAllowTags })}
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={[rehypeRaw]}
+              />
+            </div>
+          </Stack.Item>
+        )}
+        {messages && messages.length > 0 && isIntentsPanelOpen && (
+          <Stack.Item className={styles.citationPanel} tabIndex={0} role="tabpanel" aria-label={t('chat.intentsPanel')}>
+            <Stack
+              aria-label={t('chat.intentsPanelHeader')}
+              horizontal
+              className={styles.citationPanelHeaderContainer}
+              horizontalAlign="space-between"
+              verticalAlign="center">
+              <span aria-label={t('chat.intents')} className={styles.citationPanelHeader}>
+                {t('chat.intents')}
+              </span>
+              <IconButton
+                iconProps={{ iconName: 'Cancel' }}
+                aria-label={t('chat.closeIntentsPanel')}
+                onClick={() => setIsIntentsPanelOpen(false)}
+              />
+            </Stack>
+            <Stack horizontalAlign="space-between">
+              {appStateContext?.state?.answerExecResult[answerId]?.map((execResult: ExecResults, index) => (
+                <Stack className={styles.exectResultList} verticalAlign="space-between">
+                  <>
+                    <span>{t('chat.intent')}:</span> <p>{execResult.intent}</p>
+                  </>
+                  {execResult.search_query && (
                     <>
-                      <span>{t('chat.intent')}:</span> <p>{execResult.intent}</p>
+                      <span>{t('chat.searchQuery')}:</span>
+                      <SyntaxHighlighter
+                        style={nord}
+                        wrapLines={true}
+                        lineProps={{ style: { wordBreak: 'break-all', whiteSpace: 'pre-wrap' } }}
+                        language="sql"
+                        PreTag="p">
+                        {execResult.search_query}
+                      </SyntaxHighlighter>
                     </>
-                    {execResult.search_query && (
-                      <>
-                        <span>{t('chat.searchQuery')}:</span>
-                        <SyntaxHighlighter
-                          style={nord}
-                          wrapLines={true}
-                          lineProps={{ style: { wordBreak: 'break-all', whiteSpace: 'pre-wrap' } }}
-                          language="sql"
-                          PreTag="p">
-                          {execResult.search_query}
-                        </SyntaxHighlighter>
-                      </>
-                    )}
-                    {execResult.search_result && (
-                      <>
-                        <span>{t('chat.searchResult')}:</span> <p>{execResult.search_result}</p>
-                      </>
-                    )}
-                    {execResult.code_generated && (
-                      <>
-                        <span>{t('chat.codeGenerated')}:</span>
-                        <SyntaxHighlighter
-                          style={nord}
-                          wrapLines={true}
-                          lineProps={{ style: { wordBreak: 'break-all', whiteSpace: 'pre-wrap' } }}
-                          language="python"
-                          PreTag="p">
-                          {execResult.code_generated}
-                        </SyntaxHighlighter>
-                      </>
-                    )}
-                  </Stack>
-                ))}
-              </Stack>
-            </Stack.Item>
-          )}
-          {appStateContext?.state.isChatHistoryOpen &&
-            appStateContext?.state.isCosmosDBAvailable?.status !== CosmosDBStatus.NotConfigured && <ChatHistoryPanel />}
-        </Stack>
-      )}
+                  )}
+                  {execResult.search_result && (
+                    <>
+                      <span>{t('chat.searchResult')}:</span> <p>{execResult.search_result}</p>
+                    </>
+                  )}
+                  {execResult.code_generated && (
+                    <>
+                      <span>{t('chat.codeGenerated')}:</span>
+                      <SyntaxHighlighter
+                        style={nord}
+                        wrapLines={true}
+                        lineProps={{ style: { wordBreak: 'break-all', whiteSpace: 'pre-wrap' } }}
+                        language="python"
+                        PreTag="p">
+                        {execResult.code_generated}
+                      </SyntaxHighlighter>
+                    </>
+                  )}
+                </Stack>
+              ))}
+            </Stack>
+          </Stack.Item>
+        )}
+        {appStateContext?.state.isChatHistoryOpen &&
+          appStateContext?.state.isCosmosDBAvailable?.status !== CosmosDBStatus.NotConfigured && <ChatHistoryPanel />}
+      </Stack>
     </div>
   )
 }

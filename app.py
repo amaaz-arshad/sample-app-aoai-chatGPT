@@ -55,6 +55,7 @@ from concurrent.futures import ThreadPoolExecutor
 import threading
 from collections import deque
 from datetime import datetime
+# from werkzeug.middleware.proxy_fix import ProxyFix
 
 load_dotenv() 
 
@@ -146,6 +147,13 @@ def run_async_in_thread(loop, coro):
     
 def create_app():
     app = Quart(__name__)
+    # Apply ProxyFix so X-Forwarded-Proto (and others) are honored
+    # app.asgi_app = ProxyFix(
+    #     app.asgi_app,
+    #     x_proto=1,   # trust one proxy for scheme
+    #     x_host=1,    # trust one proxy for host
+    #     x_for=1      # trust one proxy for client IP (optional)
+    # )
     app.register_blueprint(bp)
     app.config["TEMPLATES_AUTO_RELOAD"] = True
     # Allow files up to 100000MB
@@ -410,10 +418,10 @@ async def prepare_model_args(request_body, request_headers):
             data_source_config["parameters"]["filter"] = f"organization eq '{companyName}'"
 
         # public_base_url = request.url_root.rstrip("/")
+        
         data_source_config["parameters"]["embedding_dependency"] = {
             "type": "endpoint",
-            # "endpoint": app_settings.azure_openai.embedding_endpoint,
-            "endpoint": " https://03b1b70e7023.ngrok-free.app/api/embed",
+            "endpoint": app_settings.azure_openai.embedding_endpoint,
             "authentication": {
                 "type": "api_key",
                 "key": f"{authenticated_user['auth_token']}",

@@ -66,3 +66,13 @@
   display: flex;
   align-items: center;
 }
+
+.snap-link {
+  color: grey;
+  text-decoration: none;
+  font-weight: normal;
+}
+.snap-link:hover {
+  color: silver;
+  cursor: pointer;
+}

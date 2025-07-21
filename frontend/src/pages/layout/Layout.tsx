@@ -1,3 +1,4 @@
+/* layout.tsx */
 import { useContext, useEffect, useState } from 'react'
 import { Link, Outlet } from 'react-router-dom'
 import { Dialog, Stack, TextField } from '@fluentui/react'
@@ -10,7 +11,12 @@ import { AppStateContext } from '../../state/AppProvider'
 
 import styles from './Layout.module.css'
 import Navbar from '../../components/Navbar/Navbar'
+import NavbarSimple from '../../components/Navbar/NavbarSimple'
 import { useLanguage } from '../../state/LanguageContext'
+
+// Detect org subdomain same as in index.tsx
+const hostname = window.location.hostname.split('.')
+const isOrgDomain = hostname[1] == 'chatbot'
 
 const Layout = () => {
   const [isSharePanelOpen, setIsSharePanelOpen] = useState<boolean>(false)
@@ -22,10 +28,6 @@ const Layout = () => {
   const [logo, setLogo] = useState('')
   const appStateContext = useContext(AppStateContext)
   const ui = appStateContext?.state.frontendSettings?.ui
-
-  const handleShareClick = () => {
-    window.location.href = `/.auth/logout`
-  }
 
   const handleSharePanelDismiss = () => {
     setIsSharePanelOpen(false)
@@ -71,28 +73,34 @@ const Layout = () => {
   return (
     <>
       <div className={styles.layout}>
-        <Navbar />
-        <header className={styles.header} role={'banner'}>
-          <Stack horizontal verticalAlign="center" horizontalAlign="space-between">
-            <Stack horizontal verticalAlign="center">
-              {/* <img src={logo} className={styles.headerIcon} aria-hidden="true" alt="" /> */}
-              {/* <Link to="/" className={styles.headerTitleContainer}>
-                <h1 className={styles.headerTitle}>{ui?.title}</h1>
-              </Link> */}
+        {/* Conditionally render Navbar variants */}
+        {isOrgDomain ? <NavbarSimple /> : <Navbar />}
+
+        {/* Only show header on main domain */}
+        {!isOrgDomain ? (
+          <header className={styles.header} role={'banner'}>
+            <Stack horizontal verticalAlign="center" horizontalAlign="space-between">
+              <Stack horizontal verticalAlign="center">
+                {/* logo and title omitted for brevity */}
+              </Stack>
+              <Stack horizontal tokens={{ childrenGap: 4 }} className={styles.shareButtonContainer}>
+                {appStateContext?.state.isCosmosDBAvailable?.status !== CosmosDBStatus.NotConfigured &&
+                  ui?.show_chat_history_button !== false && (
+                    <HistoryButton
+                      onClick={handleHistoryClick}
+                      text={appStateContext?.state?.isChatHistoryOpen ? hideHistoryLabel : showHistoryLabel}
+                    />
+                  )}
+                {/* share button removed or unchanged as desired */}
+              </Stack>
             </Stack>
-            <Stack horizontal tokens={{ childrenGap: 4 }} className={styles.shareButtonContainer}>
-              {appStateContext?.state.isCosmosDBAvailable?.status !== CosmosDBStatus.NotConfigured &&
-                ui?.show_chat_history_button !== false && (
-                  <HistoryButton
-                    onClick={handleHistoryClick}
-                    text={appStateContext?.state?.isChatHistoryOpen ? hideHistoryLabel : showHistoryLabel}
-                  />
-                )}
-              {/* {ui?.show_share_button && <ShareButton onClick={handleShareClick} text={shareLabel} />} */}
-            </Stack>
-          </Stack>
-        </header>
+          </header>
+        ) : (
+          <div className="mt-2" />
+        )}
+
         <Outlet />
+
         <Dialog
           onDismiss={handleSharePanelDismiss}
           hidden={!isSharePanelOpen}

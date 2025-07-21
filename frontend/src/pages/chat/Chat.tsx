@@ -50,6 +50,9 @@ const enum messageStatus {
   Done = 'Done'
 }
 
+const hostname = window.location.hostname.split('.')
+const isOrgDomain = hostname[1] == 'chatbot'
+
 const Chat = () => {
   const appStateContext = useContext(AppStateContext)
   const ui = appStateContext?.state.frontendSettings?.ui
@@ -72,7 +75,7 @@ const Chat = () => {
   const [logo, setLogo] = useState('')
   const [answerId, setAnswerId] = useState<string>('')
   const [userDetails, setUserDetails] = useState<UserInfo[]>([])
-  const [organization, setOrganization] = useState('')
+  const [organization, setOrganization] = useState(isOrgDomain ? hostname[0].toLowerCase() : '')
   const { t } = useLanguage()
   const { userInfo } = useAppUser()
 
@@ -95,8 +98,10 @@ const Chat = () => {
 
   useEffect(() => {
     if (userInfo && userInfo.length > 0) {
-      const organizationClaim = userInfo[0].user_claims.find(claim => claim.typ === FILTER_FIELD)
-      setOrganization(organizationClaim ? organizationClaim.val.trim().toLowerCase() : '')
+      if (!isOrgDomain) {
+        const organizationClaim = userInfo[0].user_claims.find(claim => claim.typ === FILTER_FIELD)
+        setOrganization(organizationClaim ? organizationClaim.val.trim().toLowerCase() : '')
+      }
     }
     setIsAuthLoading(false)
   }, [userInfo])
@@ -155,7 +160,11 @@ const Chat = () => {
     console.log('companyname:', organizationVal)
     setUserDetails(userInfoList)
     if (userInfoList.length === 0 && window.location.hostname !== '127.0.0.1') {
-      setShowAuthMessage(true)
+      toast.error(t('chat.sessionExpired'))
+      // logout after 2 seconds
+      setTimeout(() => {
+        window.location.href = '/.auth/logout'
+      }, 2000)
     } else {
       setShowAuthMessage(false)
     }
@@ -215,7 +224,10 @@ const Chat = () => {
   }
 
   const makeApiRequestWithoutCosmosDB = async (question: ChatMessage['content'], conversationId?: string) => {
-    if (userDetails?.[0]?.id_token && isIdTokenExpired(userDetails[0].id_token)) {
+    if (
+      (userDetails?.length == 0 && window.location.hostname !== '127.0.0.1') ||
+      (userDetails?.[0]?.id_token && isIdTokenExpired(userDetails[0].id_token))
+    ) {
       toast.error(t('chat.sessionExpired'))
       setTimeout(() => {
         window.location.href = '/.auth/logout'
@@ -367,7 +379,10 @@ const Chat = () => {
   }
 
   const makeApiRequestWithCosmosDB = async (question: ChatMessage['content'], conversationId?: string) => {
-    if (userDetails?.[0]?.id_token && isIdTokenExpired(userDetails[0].id_token)) {
+    if (
+      (userDetails?.length == 0 && window.location.hostname !== '127.0.0.1') ||
+      (userDetails?.[0]?.id_token && isIdTokenExpired(userDetails[0].id_token))
+    ) {
       toast.error(t('chat.sessionExpired'))
       setTimeout(() => {
         window.location.href = '/.auth/logout'

@@ -1,8 +1,12 @@
+/* Navbar.css */
+
+/* Active nav link */
 .nav-link.active {
   /* background-color: #007bff; */
   color: white;
 }
 
+/* Utility classes */
 .position-relative {
   position: relative;
 }
@@ -23,24 +27,15 @@
   left: 100%;
 }
 
+/* Badge styling and animation */
 .badge {
   font-size: 0.65em;
   padding: 0.35em 0.65em;
-  /* Adjusted positioning */
   top: -5px !important;
   transform: translateX(-50%) !important;
+  animation: pulse 1.5s infinite;
 }
 
-.bg-danger {
-  background-color: #dc3545;
-}
-
-.job-tooltip-content {
-  text-align: center;
-  padding: 8px 12px;
-}
-
-/* Animation for badge */
 @keyframes pulse {
   0% {
     transform: translateX(-50%) scale(1);
@@ -53,16 +48,79 @@
   }
 }
 
-.badge {
-  animation: pulse 1.5s infinite;
+.bg-danger {
+  background-color: #dc3545;
 }
 
-/* Alignment fixes */
+/* Tooltip */
+.job-tooltip-content {
+  text-align: center;
+  padding: 8px 12px;
+}
+
+/* Flex alignment fix */
 .d-flex.align-items-center {
   align-items: center !important;
 }
 
+/* Notification bell */
 .notification-bell {
   display: flex;
   align-items: center;
+}
+
+/* SNAP link base styles */
+.snap-link {
+  color: grey;
+  text-decoration: none;
+  font-weight: normal;
+}
+
+.snap-link:hover {
+  color: silver;
+  cursor: pointer;
+}
+
+/* Center title placement variants */
+.navbar-title-desktop,
+.navbar-title-mobile {
+  color: grey;
+  text-decoration: none;
+  font-weight: normal;
+}
+
+.navbar-title-desktop:hover,
+.navbar-title-mobile:hover {
+  color: silver;
+  cursor: pointer;
+}
+
+/* Desktop: absolute-centered title on screens ≥768px */
+@media (min-width: 768px) {
+  .navbar {
+    position: relative; /* container for absolute child */
+  }
+  .navbar-title-desktop {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    white-space: nowrap;
+    z-index: 1;
+    display: block;
+  }
+  .navbar-title-mobile {
+    display: none;
+  }
+}
+
+/* Mobile: static centered title (<768px) */
+@media (max-width: 767.98px) {
+  .navbar-title-mobile {
+    display: block;
+    /* mx-auto on container handles centering */
+  }
+  .navbar-title-desktop {
+    display: none;
+  }
 }

@@ -8,10 +8,11 @@ import agindoNav from '../assets/agindo-nav.png'
 import agindoChat from '../assets/agindo-chat.png'
 import lemonChat from '../assets/lemon-chat.png'
 import lemonNav from '../assets/lemon-nav.png'
+import pinkvoss from '../assets/pinkvoss.png'
 
 export const FILTER_FIELD = 'city'
 export const FILTER_FIELD2 = 'streetAddress'
-
+export const simpleApps = ['agindo', 'pinkvoss', 'publishone']
 export const logos = {
   navbar: {
     default: SnapLogo,
@@ -19,7 +20,8 @@ export const logos = {
     vjoon: vjoonNav,
     'vjoon k4': vjoonNav,
     agindo: agindoNav,
-    lemon: lemonNav
+    lemon: lemonNav,
+    pinkvoss: pinkvoss
   },
   chat: {
     default: SnapLogo,
@@ -27,13 +29,15 @@ export const logos = {
     vjoon: vjoonChat,
     'vjoon k4': vjoonChat,
     agindo: agindoChat,
-    lemon: lemonChat
+    lemon: lemonChat,
+    pinkvoss: pinkvoss
   }
 }
 
 export const translations: Record<Language, Record<string, string>> = {
   en: {
     // Navbar
+    'navbar.chatbotBySnap': 'Chatbot by SNAP',
     'navbar.chatbot': 'Chatbot',
     'navbar.uploadFiles': 'Upload Files',
     'navbar.history': 'History',
@@ -207,6 +211,7 @@ export const translations: Record<Language, Record<string, string>> = {
   },
   de: {
     // Navbar
+    'navbar.chatbotBySnap': 'Chatbot von SNAP',
     'navbar.chatbot': 'Chatbot',
     'navbar.uploadFiles': 'Dateien hochladen',
     'navbar.history': 'Verlauf',

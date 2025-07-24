@@ -11,12 +11,7 @@ import { AppStateContext } from '../../state/AppProvider'
 
 import styles from './Layout.module.css'
 import Navbar from '../../components/Navbar/Navbar'
-import NavbarSimple from '../../components/Navbar/NavbarSimple'
 import { useLanguage } from '../../state/LanguageContext'
-
-// Detect org subdomain same as in index.tsx
-const hostname = window.location.hostname.split('.')
-const isOrgDomain = hostname[1] == 'chatbot'
 
 const Layout = () => {
   const [isSharePanelOpen, setIsSharePanelOpen] = useState<boolean>(false)
@@ -74,30 +69,25 @@ const Layout = () => {
     <>
       <div className={styles.layout}>
         {/* Conditionally render Navbar variants */}
-        {isOrgDomain ? <NavbarSimple /> : <Navbar />}
+        <Navbar />
 
-        {/* Only show header on main domain */}
-        {!isOrgDomain ? (
-          <header className={styles.header} role={'banner'}>
-            <Stack horizontal verticalAlign="center" horizontalAlign="space-between">
-              <Stack horizontal verticalAlign="center">
-                {/* logo and title omitted for brevity */}
-              </Stack>
-              <Stack horizontal tokens={{ childrenGap: 4 }} className={styles.shareButtonContainer}>
-                {appStateContext?.state.isCosmosDBAvailable?.status !== CosmosDBStatus.NotConfigured &&
-                  ui?.show_chat_history_button !== false && (
-                    <HistoryButton
-                      onClick={handleHistoryClick}
-                      text={appStateContext?.state?.isChatHistoryOpen ? hideHistoryLabel : showHistoryLabel}
-                    />
-                  )}
-                {/* share button removed or unchanged as desired */}
-              </Stack>
+        <header className={styles.header} role={'banner'}>
+          <Stack horizontal verticalAlign="center" horizontalAlign="space-between">
+            <Stack horizontal verticalAlign="center">
+              {/* logo and title omitted for brevity */}
             </Stack>
-          </header>
-        ) : (
-          <div className="mt-2" />
-        )}
+            <Stack horizontal tokens={{ childrenGap: 4 }} className={styles.shareButtonContainer}>
+              {appStateContext?.state.isCosmosDBAvailable?.status !== CosmosDBStatus.NotConfigured &&
+                ui?.show_chat_history_button !== false && (
+                  <HistoryButton
+                    onClick={handleHistoryClick}
+                    text={appStateContext?.state?.isChatHistoryOpen ? hideHistoryLabel : showHistoryLabel}
+                  />
+                )}
+              {/* share button removed or unchanged as desired */}
+            </Stack>
+          </Stack>
+        </header>
 
         <Outlet />
 

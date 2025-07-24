@@ -21,10 +21,6 @@ import { AppUserProvider } from './state/AppUserProvider'
 import { LanguageProvider } from './state/LanguageContext'
 import { BackgroundJobsProvider } from './state/BackgroundJobsContext'
 
-// Detect if running on an organizational subdomain
-const hostname = window.location.hostname.split('.')
-const isOrgDomain = hostname[1] == 'chatbot'
-
 initializeIcons('https://res.cdn.office.net/files/fabric-cdn-prod_20240129.001/assets/icons/')
 
 export default function App() {
@@ -39,14 +35,9 @@ export default function App() {
                   <Route index element={<Chat />} />
                   <Route path="*" element={<NoPage />} />
                 </Route>
-                {/* Conditionally disable admin routes on org subdomains */}
-                {!isOrgDomain && (
-                  <>
-                    <Route path="/upload-files" element={<FileUpload />} />
-                    <Route path="/history" element={<History />} />
-                    <Route path="/system-message" element={<SystemMessage />} />
-                  </>
-                )}
+                <Route path="/upload-files" element={<FileUpload />} />
+                <Route path="/history" element={<History />} />
+                <Route path="/system-message" element={<SystemMessage />} />
               </Routes>
             </HashRouter>
           </BackgroundJobsProvider>

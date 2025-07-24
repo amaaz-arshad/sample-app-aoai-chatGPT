@@ -8,11 +8,14 @@ import { useBackgroundJobs } from '../../state/BackgroundJobsContext'
 import { Dropdown, Spinner } from 'react-bootstrap'
 import { toast, ToastContainer } from 'react-toastify'
 
+const hostname = window.location.hostname.split('.')
+const isOrgDomain = hostname[1] == 'chatbot'
+
 export default function Navbar() {
   const { userInfo } = useAppUser()
   const { t, language, setLanguage } = useLanguage()
   const [userType, setUserType] = useState<string>('')
-  const [organization, setOrganization] = useState<string>('')
+  const [organization, setOrganization] = useState<string>(isOrgDomain ? hostname[0].toLowerCase() : '')
   const [isLoading, setIsLoading] = useState<boolean>(true)
   const { jobs } = useBackgroundJobs()
 
@@ -22,9 +25,10 @@ export default function Navbar() {
 
   useEffect(() => {
     if (userInfo && userInfo.length > 0) {
-      const organizationClaim = userInfo[0].user_claims.find(claim => claim.typ === FILTER_FIELD)
-      setOrganization(organizationClaim ? organizationClaim.val.trim().toLowerCase() : '')
-
+      if (!isOrgDomain) {
+        const organizationClaim = userInfo[0].user_claims.find(claim => claim.typ === FILTER_FIELD)
+        setOrganization(organizationClaim ? organizationClaim.val.trim().toLowerCase() : '')
+      }
       const userTypeClaim = userInfo[0].user_claims.find(claim => claim.typ === FILTER_FIELD2)
       setUserType(userTypeClaim ? userTypeClaim.val.trim().toLowerCase() : '')
     }
@@ -145,6 +149,17 @@ export default function Navbar() {
               </Dropdown>
             )}
           </div>
+
+          {/* Center (desktop): absolute Chatbot by SNAP */}
+          {isOrgDomain && (
+            <a
+              href="https://www.snap.de/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="snap-link navbar-title-desktop">
+              {t('navbar.chatbotBySnap')}
+            </a>
+          )}
         </div>
       </nav>
 

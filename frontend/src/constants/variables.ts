@@ -10,6 +10,8 @@ import lemonChat from '../assets/lemon-chat.png'
 import lemonNav from '../assets/lemon-nav.png'
 import pinkvoss from '../assets/pinkvoss.png'
 
+export const POLICY = 'B2C_1A_signup_signin'
+export const TENANT = 'snapdeai'
 export const FILTER_FIELD = 'city'
 export const FILTER_FIELD2 = 'streetAddress'
 export const simpleApps = ['agindo', 'pinkvoss', 'publishone']

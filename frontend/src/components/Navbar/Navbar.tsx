@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import './Navbar.css'
 import { useAppUser } from '../../state/AppUserProvider'
-import { FILTER_FIELD, FILTER_FIELD2, logos } from '../../constants/variables'
+import { FILTER_FIELD, FILTER_FIELD2, logos, POLICY, TENANT } from '../../constants/variables'
 import { useLanguage } from '../../state/LanguageContext'
 import { useBackgroundJobs } from '../../state/BackgroundJobsContext'
 import { Dropdown, Spinner } from 'react-bootstrap'
@@ -47,6 +47,13 @@ export default function Navbar() {
       }
     })
   }, [jobs, t])
+
+  const handleLogout = () => {
+    // window.location.href = '/.auth/logout'
+    window.location.href =
+      `https://${TENANT}.b2clogin.com/${TENANT}.onmicrosoft.com/${POLICY}/oauth2/v2.0/logout` +
+      `?post_logout_redirect_uri=https://${window.location.hostname}/.auth/login/aadb2c/callback`
+  }
 
   // choose logo from nested navbar object
   const navbarLogos = logos.navbar as Record<string, string>
@@ -103,7 +110,7 @@ export default function Navbar() {
               )}
 
               {/* Logout button */}
-              <button className="nav-link fw-bold" onClick={() => (window.location.href = '/.auth/logout')}>
+              <button className="nav-link fw-bold" onClick={handleLogout}>
                 {t('navbar.logout')}
               </button>
             </div>

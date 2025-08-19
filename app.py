@@ -412,7 +412,8 @@ async def prepare_model_args(request_body, request_headers):
         public_base_url = request.url_root.rstrip("/").replace("http://", "https://")
         data_source_config["parameters"]["embedding_dependency"] = {
             "type": "endpoint",
-            "endpoint": f"{public_base_url}/api/embed",
+            # "endpoint": f"{public_base_url}/api/embed",
+            "endpoint": "https://5e35427e2fa0.ngrok-free.app/api/embed",
             "authentication": {
                 "type": "api_key",
                 "key": f"{authenticated_user['auth_token']}",

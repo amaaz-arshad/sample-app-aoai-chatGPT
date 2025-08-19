@@ -1674,10 +1674,10 @@ def chunk_text(text: str, chunk_size: int = 5_000) -> List[str]:
 
 
 def process_xml_file(
-        xml_data: bytes,
-        organization: str,
-        file_name: str,
-        model  # sentence-transformers model
+    xml_data: bytes,
+    organization: str,
+    file_name: str,
+    model  # sentence-transformers model
 ):
     """
     Parse XML data from bytes and return a list of documents ready for
@@ -1686,7 +1686,26 @@ def process_xml_file(
     try:
         root = ET.fromstring(xml_data)
         base_name = os.path.splitext(file_name)[0]
+        docs_array = []
         
+        # --- NEW FORMAT DETECTION (by presence of <details> tag) ---
+        def is_new_format(elem):
+            """Check if element has a <details> child"""
+            return elem.find("details") is not None
+        
+        # Case 1: Root is container element (like <artists>) with multiple items
+        if any(is_new_format(child) for child in root):
+            for item in root:
+                if is_new_format(item):
+                    process_new_format_item(item, docs_array, organization, model)
+            return docs_array
+        
+        # Case 2: Root itself is an item with details
+        if is_new_format(root):
+            process_new_format_item(root, docs_array, organization, model)
+            return docs_array
+        
+        # --- EXISTING PROCESSING FOR OLD FORMAT ---
         # Handle different root types
         if root.tag == "folder":
             folder_elem = root
@@ -1704,54 +1723,97 @@ def process_xml_file(
                     if child.tag in ["document", "folder"]:
                         folder_elem.append(child)
         
+        # -- depth-first traversal of folders & docs -----------------------------
+        def traverse(folder_elem, parent_folder_id=None, parent_folder_name=None):
+            fid = folder_elem.attrib.get("id", parent_folder_id)
+            fname = folder_elem.findtext("naam", parent_folder_name or base_name).strip()
+
+            # process <document> children
+            for doc in folder_elem.findall("document"):
+                doc_id = doc.attrib.get("id", "")
+                try:
+                    page_num = int(doc_id)
+                except (TypeError, ValueError):
+                    page_num = 0
+                    
+                title = doc.findtext("naam", "").strip() or "(untitled)"
+                body_section = doc.find("document/section")
+                markdown = "\n\n".join(elem_to_markdown(body_section)) if body_section is not None else ""
+
+                for idx, chunk in enumerate(chunk_text(markdown), 1):
+                    header = f"{title} - Chunk {idx}"
+                    content = f"{header}\n\n{chunk}"
+                    content_vector = model.encode(content).tolist()
+
+                    docs_array.append({
+                        "id": str(uuid.uuid4()),
+                        "organization": organization,
+                        "title": f"{title} - Part {idx}",
+                        "page": page_num,
+                        "total_pages": int(fid) if fid and fid.isdigit() else 0,
+                        "file": doc_id,
+                        "content": content,
+                        "keywords": [],
+                        "contentVector": content_vector,
+                    })
+
+            # recurse into sub-folders
+            for sub in folder_elem.findall("folder"):
+                traverse(sub, fid, fname)
+
+        traverse(folder_elem, parent_folder_name=base_name)
+        return docs_array
+        
     except ET.ParseError as e:
         raise ValueError(f"Failed to parse XML data: {e}")
 
-    docs_array = []
-
-    # -- depth-first traversal of folders & docs -----------------------------
-    def traverse(folder_elem, parent_folder_id=None, parent_folder_name=None):
-        fid = folder_elem.attrib.get("id", parent_folder_id)
-        fname = folder_elem.findtext("naam", parent_folder_name or base_name).strip()
-
-        # process <document> children
-        for doc in folder_elem.findall("document"):
-            doc_id = doc.attrib.get("id", "")
-            try:
-                page_num = int(doc_id)
-            except (TypeError, ValueError):
-                page_num = 0
+def process_new_format_item(item, docs_array, organization, model):
+    """Process a single item in the new XML format"""
+    item_id = item.attrib.get("id", str(uuid.uuid4()))
+    details = item.find("details")
+    main_tag = item.tag
+    
+    if details is None:
+        return
+    
+    # Build markdown content
+    markdown = f"## {main_tag.capitalize()} {item_id}\n\n"
+    
+    for field in details:
+        field_name = field.tag.replace('_', ' ').title()
+        values = []
+        
+        # Handle different value structures
+        if field.text and field.text.strip():
+            values.append(field.text.strip())
+            
+        for child in field:
+            if child.text and child.text.strip():
+                values.append(child.text.strip())
+            elif child.tail and child.tail.strip():
+                values.append(child.tail.strip())
                 
-            title = doc.findtext("naam", "").strip() or "(untitled)"
-            body_section = doc.find("document/section")
-            print(f"\nProcessing document: {doc_id}")
-            markdown = "\n\n".join(elem_to_markdown(body_section)) if body_section is not None else ""
-
-            for idx, chunk in enumerate(chunk_text(markdown), 1):
-                header = f"{title} - Chunk {idx}"
-                content = f"{header}\n\n{chunk}"
-                print(f"Embedding chunk {idx} of document {doc_id}")
-                content_vector = model.encode(content).tolist()
-
-                docs_array.append({
-                    "id": str(uuid.uuid4()),
-                    "organization": organization,
-                    "title": f"{title} - Part {idx}",
-                    "page": page_num,
-                    "total_pages": int(fid) if fid and fid.isdigit() else 0,
-                    "file": doc_id,
-                    "content": content,
-                    "keywords": [],
-                    "contentVector": content_vector,
-                })
-
-        # recurse into sub-folders
-        for sub in folder_elem.findall("folder"):
-            traverse(sub, fid, fname)
-
-    traverse(folder_elem, parent_folder_name=base_name)
-    return docs_array
-
+        if values:
+            if len(values) == 1:
+                markdown += f"**{field_name}:** {values[0]}\n\n"
+            else:
+                markdown += f"**{field_name}:**\n"
+                markdown += "\n".join(f"- {v}" for v in values) + "\n\n"
+    
+    # Generate embeddings
+    content_vector = model.encode(markdown).tolist()
+    
+    docs_array.append({
+        "id": str(uuid.uuid4()),
+        "organization": organization,
+        "title": f"{main_tag.capitalize()} {item_id}",
+        "page": 0,
+        "total_pages": 0,
+        "file": item_id,
+        "content": markdown,
+        "keywords": [],
+        "contentVector": content_vector,
+    })
 
 async def process_single_xml_file(filename: str, content: bytes, organization: str):
     blob_path = f"{organization}/{filename}"

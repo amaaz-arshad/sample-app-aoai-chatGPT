@@ -55,6 +55,10 @@ from concurrent.futures import ThreadPoolExecutor
 import threading
 from collections import deque
 from datetime import datetime
+# Add these imports at the top of app.py
+from queue import Queue
+from threading import Thread, Event
+import queue
 
 load_dotenv() 
 
@@ -109,13 +113,72 @@ MAX_WORKERS = int(os.getenv("THREAD_POOL_MAX_WORKERS", "3"))
 # Initialize a thread pool for CPU-bound tasks
 executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
+# Replace the current upload_jobs and job_lock with a more comprehensive system
+upload_queue = Queue()
+queue_worker_running = Event()
 upload_jobs = {}
 job_lock = threading.Lock()
 JOB_EXPIRY_SECONDS = 86400  # 24 hours
 
-# Background job status tracking
+# Add these constants near the top with other settings
+MAX_QUEUE_WORKERS = 1  # Process one batch at a time
+JOB_QUEUE_MAX_SIZE = 100  # Maximum jobs in queue
+
+# Queue worker function
+def queue_worker():
+    while queue_worker_running.is_set():
+        try:
+            # Get a job from the queue (wait up to 1 second)
+            job_data = upload_queue.get(timeout=1)
+            job_id, file_data, is_xml = job_data
+            
+            # Update job status to processing
+            update_job_status(job_id, "processing")
+            
+            # Process the files
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+                if is_xml:
+                    result = loop.run_until_complete(async_process_files(file_data, job_id, True))
+                else:
+                    result = loop.run_until_complete(async_process_files(file_data, job_id, False))
+                
+                loop.close()
+                
+                # Mark job as completed
+                update_job_status(job_id, "completed", result=result)
+                
+            except Exception as e:
+                logging.error(f"Job {job_id} failed: {str(e)}")
+                update_job_status(job_id, "failed", error=str(e))
+                
+            finally:
+                upload_queue.task_done()
+                
+        except queue.Empty:
+            # No jobs in queue, continue waiting
+            continue
+
+# Start the queue worker when the app starts
+def start_queue_workers():
+    queue_worker_running.set()
+    for i in range(MAX_QUEUE_WORKERS):
+        worker = Thread(target=queue_worker, daemon=True)
+        worker.start()
+
+# Stop the queue worker when the app shuts down
+def stop_queue_workers():
+    queue_worker_running.clear()
+
+# Update the update_job_status function to handle queue positions
 def update_job_status(job_id: str, status: str, result: dict = None, error: str = None):
     with job_lock:
+        # If the job is completing, remove queue position info
+        if status in ["processing", "completed", "failed"] and result and "position_in_queue" in result:
+            del result["position_in_queue"]
+            
         upload_jobs[job_id] = {
             "status": status,
             "result": result,
@@ -144,6 +207,7 @@ def run_async_in_thread(loop, coro):
     asyncio.set_event_loop(loop)
     loop.run_until_complete(coro)
     
+# Modify the create_app function to start queue workers
 def create_app():
     app = Quart(__name__)
     app.register_blueprint(bp)
@@ -156,10 +220,17 @@ def create_app():
         try:
             app.cosmos_conversation_client = await init_cosmosdb_client()
             cosmos_db_ready.set()
+            # Start queue workers when app starts
+            start_queue_workers()
         except Exception as e:
             logging.exception("Failed to initialize CosmosDB client")
             app.cosmos_conversation_client = None
             raise e
+    
+    # Add shutdown handler
+    @app.after_serving
+    async def shutdown():
+        stop_queue_workers()
     
     return app
 
@@ -412,8 +483,7 @@ async def prepare_model_args(request_body, request_headers):
         public_base_url = request.url_root.rstrip("/").replace("http://", "https://")
         data_source_config["parameters"]["embedding_dependency"] = {
             "type": "endpoint",
-            # "endpoint": f"{public_base_url}/api/embed",
-            "endpoint": "https://5e35427e2fa0.ngrok-free.app/api/embed",
+            "endpoint": f"{public_base_url}/api/embed",
             "authentication": {
                 "type": "api_key",
                 "key": f"{authenticated_user['auth_token']}",
@@ -1195,6 +1265,7 @@ async def process_single_file(filename: str, content: bytes, organization: str):
         gc.collect()
 
 
+# Modify the upload endpoints to use the queue
 @bp.route("/pipeline/upload", methods=["POST"])
 async def upload_files():
     form = await request.form
@@ -1204,8 +1275,11 @@ async def upload_files():
     if not organization:
         return jsonify({"detail": "Missing 'organization' field."}), 400
     
+    # Check if queue is full
+    if upload_queue.qsize() >= JOB_QUEUE_MAX_SIZE:
+        return jsonify({"detail": "Upload queue is full. Please try again later."}), 503
+    
     job_id = str(uuid.uuid4())
-    update_job_status(job_id, "queued")
     
     # Capture file content immediately before files are closed
     file_data = []
@@ -1216,15 +1290,15 @@ async def upload_files():
             "organization": organization
         })
     
-    # Start background processing
-    loop = asyncio.new_event_loop()
-    threading.Thread(
-        target=run_async_in_thread,
-        args=(loop, async_process_files(file_data, job_id, False)),
-        daemon=True
-    ).start()
+    # Add job to queue instead of processing immediately
+    upload_queue.put((job_id, file_data, False))
+    update_job_status(job_id, "queued", result={"position_in_queue": upload_queue.qsize()})
     
-    return jsonify({"job_id": job_id}), 202
+    return jsonify({
+        "job_id": job_id,
+        "message": "Files added to processing queue",
+        "position_in_queue": upload_queue.qsize()
+    }), 202
 
 
 # Route to delete all files or files by companyClaim or organizationFilter
@@ -1859,6 +1933,7 @@ async def process_single_xml_file(filename: str, content: bytes, organization: s
         gc.collect()
         
 
+# Similarly modify the XML upload endpoint
 @bp.route("/pipeline/upload_xml", methods=["POST"])
 async def upload_xml_files():
     form = await request.form
@@ -1868,8 +1943,11 @@ async def upload_xml_files():
     if not organization:
         return jsonify({"detail": "Missing 'organization' field."}), 400
     
+    # Check if queue is full
+    if upload_queue.qsize() >= JOB_QUEUE_MAX_SIZE:
+        return jsonify({"detail": "Upload queue is full. Please try again later."}), 503
+    
     job_id = str(uuid.uuid4())
-    update_job_status(job_id, "queued")
     
     # Capture file content immediately before files are closed
     file_data = []
@@ -1880,15 +1958,15 @@ async def upload_xml_files():
             "organization": organization
         })
     
-    # Start background processing
-    loop = asyncio.new_event_loop()
-    threading.Thread(
-        target=run_async_in_thread,
-        args=(loop, async_process_files(file_data, job_id, True)),
-        daemon=True
-    ).start()
+    # Add job to queue instead of processing immediately
+    upload_queue.put((job_id, file_data, True))
+    update_job_status(job_id, "queued", result={"position_in_queue": upload_queue.qsize()})
     
-    return jsonify({"job_id": job_id}), 202
+    return jsonify({
+        "job_id": job_id,
+        "message": "Files added to processing queue",
+        "position_in_queue": upload_queue.qsize()
+    }), 202
 
 
 async def async_process_files(file_data, job_id, is_xml=False):
@@ -1924,6 +2002,7 @@ async def async_process_files(file_data, job_id, is_xml=False):
         update_job_status(job_id, "failed", error=str(e))
 
 
+# Enhance the job status function to include queue position
 @bp.route("/pipeline/job_status/<job_id>", methods=["GET"])
 async def get_job_status(job_id: str):
     with job_lock:
@@ -1932,12 +2011,25 @@ async def get_job_status(job_id: str):
     if not job:
         return jsonify({"error": "Job not found"}), 404
     
-    return jsonify({
+    # Add queue position for queued jobs
+    response_data = {
         "job_id": job_id,
         "status": job["status"],
         "result": job.get("result"),
         "error": job.get("error"),
         "timestamp": job["timestamp"]
-    })
+    }
+    
+    if job["status"] == "queued":
+        # Calculate position in queue
+        position = 1
+        for i in range(upload_queue.qsize()):
+            queued_job_id, _, _ = upload_queue.queue[i]
+            if queued_job_id == job_id:
+                response_data["position_in_queue"] = position
+                break
+            position += 1
+    
+    return jsonify(response_data)
 
 app = create_app()

@@ -90,6 +90,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'fileUpload.noActiveJobs': 'No active background jobs',
     'fileUpload.progress': 'Progress',
     'fileUpload.filesProcessing': 'Files are being processed...',
+    'fileUpload.maxJobsReached':
+      'Maximum of 5 concurrent uploads reached. Please wait for current uploads to complete.',
 
     // Chat component translations
     'chat.title': 'Ask me a question!',
@@ -264,6 +266,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'fileUpload.noActiveJobs': 'Keine aktiven Hintergrundjobs',
     'fileUpload.progress': 'Fortschritt',
     'fileUpload.filesProcessing': 'Dateien werden verarbeitet...',
+    'fileUpload.maxJobsReached':
+      'Maximale Anzahl von 5 gleichzeitigen Uploads erreicht. Bitte warten Sie, bis die aktuellen Uploads abgeschlossen sind.',
 
     // Chat component translations
     'chat.title': 'Stell mir eine Frage!',

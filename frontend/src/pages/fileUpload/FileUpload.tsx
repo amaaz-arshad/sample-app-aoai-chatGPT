@@ -34,7 +34,7 @@ const FileUpload: React.FC = () => {
   const AUTH_ENABLED = appStateContext?.state.frontendSettings?.auth_enabled
   const { userInfo, authEnabled } = useAppUser()
   const { t } = useLanguage()
-  const { addJob, updateJob, removeJob } = useBackgroundJobs()
+  const { addJob, updateJob, removeJob, canAddJob } = useBackgroundJobs()
 
   /* ------------------------------------------------------------------ */
   /*  state                                                             */
@@ -169,6 +169,10 @@ const FileUpload: React.FC = () => {
   /*  PDF upload                                                        */
   /* ------------------------------------------------------------------ */
   const handleUploadPdf = async () => {
+    if (!canAddJob()) {
+      toast.error(t('fileUpload.maxJobsReached'))
+      return
+    }
     if (!newFiles?.length) {
       toast.info(t('fileUpload.chooseFile'))
       return
@@ -210,6 +214,10 @@ const FileUpload: React.FC = () => {
   /*  XML upload                                                        */
   /* ------------------------------------------------------------------ */
   const handleUploadXml = async () => {
+    if (!canAddJob()) {
+      toast.error(t('fileUpload.maxJobsReached'))
+      return
+    }
     if (!newFiles?.length) {
       toast.info(t('fileUpload.chooseFile'))
       return
@@ -358,16 +366,12 @@ const FileUpload: React.FC = () => {
               onClick={handleUploadXml}
               className="btn btn-primary"
               disabled={uploading}
-              style={{ backgroundColor: '#006DCC', borderColor: '#006DCC', marginLeft: '8px' }}>
+              style={{ backgroundColor: '#006DCC', borderColor: '#006DCC' }}>
               {uploading ? t('fileUpload.processing') : t('fileUpload.uploadXmlButton')}
             </button>
 
             {/* Delete all */}
-            <button
-              onClick={handleDeleteAll}
-              className="btn btn-danger"
-              disabled={files.length === 0 || uploading}
-              style={{ marginLeft: '10px' }}>
+            <button onClick={handleDeleteAll} className="btn btn-danger" disabled={files.length === 0 || uploading}>
               {t('fileUpload.deleteAllButton')}
             </button>
           </div>

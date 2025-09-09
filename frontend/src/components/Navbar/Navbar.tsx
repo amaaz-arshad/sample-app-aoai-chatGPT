@@ -110,9 +110,12 @@ export default function Navbar() {
               )}
 
               {/* Logout button */}
-              <button className="nav-link fw-bold" onClick={handleLogout}>
+              <NavLink
+                to=""
+                className={({ isActive }) => (isActive ? 'nav-link active fw-bold me-2' : 'nav-link fw-bold me-2')}
+                onClick={handleLogout}>
                 {t('navbar.logout')}
-              </button>
+              </NavLink>
             </div>
           </div>
 

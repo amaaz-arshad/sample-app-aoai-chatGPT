@@ -1,6 +1,6 @@
 .main-container {
   background-color: white;
-  padding: 40px;
+  padding: 40px 20px;
 }
 
 .card-title {
@@ -39,20 +39,54 @@ h2 {
   margin-bottom: 20px;
 }
 
+/* make upload section wrap so buttons can move to next row on small screens */
 .upload-section {
   display: flex;
+  flex-wrap: wrap; /* allow children to wrap to next line */
+  gap: 8px; /* space between items when wrapped */
   justify-content: space-between;
   align-items: center;
   margin-bottom: 20px;
 }
 
+/* keep the input flexible on desktop but give it a sensible minimum */
 .file-input {
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 200px;
   padding: 10px;
   border: 1px solid #ddd;
   border-radius: 5px;
   margin-right: 10px;
   font-size: 14px;
+}
+
+/* make sure buttons behave nicely */
+.upload-section .btn {
+  flex: 0 0 auto;
+}
+
+/* mobile / tablet: send file input to its own row, buttons wrap to a new row */
+@media (max-width: 768px) {
+  .upload-section {
+    justify-content: flex-start;
+  }
+
+  /* file input occupies full width, forcing the buttons to wrap below */
+  .file-input {
+    flex-basis: 100%;
+    margin-right: 0;
+  }
+
+  /* keep buttons on the next row — left-aligned; you can change flex-basis to 100% if you prefer stacked buttons */
+  .upload-section .btn {
+    flex-basis: auto;
+    margin-top: 6px;
+  }
+
+  /* small spacing between buttons on the second row */
+  .upload-section .btn + .btn {
+    margin-left: 8px;
+  }
 }
 
 .upload-button {

@@ -5,7 +5,7 @@ import 'react-toastify/dist/ReactToastify.css'
 import { AppStateContext } from '../../state/AppProvider'
 import Navbar from '../../components/Navbar/Navbar'
 import { getUserInfo, UserInfo } from '../../api'
-import { FILTER_FIELD } from '../../constants/variables'
+import { FILTER_FIELD, FILTER_FIELD2 } from '../../constants/variables'
 import './FileUpload.css'
 import { useAppUser } from '../../state/AppUserProvider'
 import { useLanguage } from '../../state/LanguageContext'
@@ -29,22 +29,26 @@ interface JobStatusResponse {
   timestamp: string
 }
 
+const FREE_USER_LIMIT = 3
+
 const FileUpload: React.FC = () => {
   const appStateContext = useContext(AppStateContext)
   const AUTH_ENABLED = appStateContext?.state.frontendSettings?.auth_enabled
   const { userInfo, authEnabled } = useAppUser()
   const { t } = useLanguage()
-  const { addJob, updateJob, removeJob } = useBackgroundJobs()
+  const { addJob, updateJob, removeJob, canAddJob } = useBackgroundJobs()
 
   /* ------------------------------------------------------------------ */
   /*  state                                                             */
   /* ------------------------------------------------------------------ */
   const [files, setFiles] = useState<string[]>([])
-  const [newFiles, setNewFiles] = useState<FileList | null>(null)
+  // using File[] for easier handling
+  const [newFiles, setNewFiles] = useState<File[] | null>(null)
   const [uploading, setUploading] = useState<boolean>(false)
   const [organizationFilter, setOrganizationFilter] = useState<string>('all')
   const [showAuthMessage, setShowAuthMessage] = useState<boolean | undefined>()
   const [currentPage, setCurrentPage] = useState<number>(1)
+  const [userType, setUserType] = useState<string>('free-user')
   const filesPerPage = 10
 
   /* ------------------------------------------------------------------ */
@@ -59,6 +63,10 @@ const FileUpload: React.FC = () => {
       setShowAuthMessage(true)
     } else {
       setShowAuthMessage(false)
+    }
+    if (userInfo && userInfo.length > 0) {
+      const userTypeClaim = userInfo[0].user_claims.find(claim => claim.typ === FILTER_FIELD2)
+      setUserType(userTypeClaim ? userTypeClaim.val.trim().toLowerCase() : '')
     }
   }, [AUTH_ENABLED, userInfo])
 
@@ -75,7 +83,7 @@ const FileUpload: React.FC = () => {
             .replace(/^\.+|\.+$/g, '')
         : ''
     }
-    return ''
+    return 'testing'
   }
 
   const validateOrgName = async (): Promise<string | null> => {
@@ -112,10 +120,48 @@ const FileUpload: React.FC = () => {
   }, [])
 
   /* ------------------------------------------------------------------ */
+  /*  Helper to get allowed remaining slots at time of selection/upload  */
+  /* ------------------------------------------------------------------ */
+  const getAllowedRemainingSlots = () => {
+    const companyName = getCompanyName()
+    const userCompanyFiles = companyName ? files.filter(f => f.startsWith(`${companyName}/`)) : files
+    const userFileCount = userCompanyFiles.length
+    return userType === 'free-user' ? Math.max(FREE_USER_LIMIT - userFileCount, 0) : Infinity
+  }
+
+  /* ------------------------------------------------------------------ */
   /*  file input change                                                 */
+  /*  (Cancel selection entirely if user selects more than remaining)   */
   /* ------------------------------------------------------------------ */
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) setNewFiles(e.target.files)
+    const fileList = e.target.files
+    if (!fileList || fileList.length === 0) {
+      setNewFiles(null)
+      return
+    }
+
+    const selected = Array.from(fileList)
+
+    // Recompute remaining slots at time of selection
+    const allowedRemaining = getAllowedRemainingSlots()
+
+    if (allowedRemaining === 0) {
+      // No slots left — clear selection and inform user
+      setNewFiles(null)
+      ;(document.getElementById('file-input') as HTMLInputElement).value = ''
+      toast.info(t('fileUpload.freeUserLimitReached') || `Free users can upload up to ${FREE_USER_LIMIT} files.`)
+      return
+    }
+
+    if (selected.length > allowedRemaining) {
+      // Cancel selection entirely and inform user (do NOT trim)
+      setNewFiles(null)
+      ;(document.getElementById('file-input') as HTMLInputElement).value = ''
+      toast.error(t('fileUpload.selectionExceedsLimit'))
+      return
+    }
+
+    setNewFiles(selected)
   }
 
   /* ------------------------------------------------------------------ */
@@ -134,11 +180,9 @@ const FileUpload: React.FC = () => {
         })
 
         if (data.status === 'completed' || data.status === 'failed') {
+          // REMOVED THE TOAST HERE - NAVBAR WILL HANDLE IT
           if (data.status === 'completed') {
-            toast.success(t('fileUpload.processingComplete'))
             fetchFiles()
-          } else if (data.error) {
-            toast.error(data.error)
           }
 
           // Remove job after delay to show completion
@@ -153,12 +197,12 @@ const FileUpload: React.FC = () => {
       }
     }
 
-    // Add job to global context with corrected type
+    // Add job to global context
     addJob({
       job_id,
       status: 'queued',
       fileType,
-      filenames, // Now properly typed as string[]
+      filenames,
       progress: 0,
       total: filenames.length
     })
@@ -169,13 +213,40 @@ const FileUpload: React.FC = () => {
 
   /* ------------------------------------------------------------------ */
   /*  PDF upload                                                        */
+  /*  (Cancel upload if selected files > remaining slots)               */
   /* ------------------------------------------------------------------ */
   const handleUploadPdf = async () => {
+    // Enforce job capacity first
+    if (!canAddJob()) {
+      toast.error(t('fileUpload.maxJobsReached'))
+      return
+    }
+
     if (!newFiles?.length) {
       toast.info(t('fileUpload.chooseFile'))
       return
     }
-    if (Array.from(newFiles).some(f => !f.name.toLowerCase().endsWith('.pdf'))) {
+
+    // Re-check allowed slots to prevent race conditions
+    const allowedRemaining = getAllowedRemainingSlots()
+    if (allowedRemaining === 0) {
+      toast.info(t('fileUpload.freeUserLimitReached') || `Free users can upload up to ${FREE_USER_LIMIT} files.`)
+      setNewFiles(null)
+      ;(document.getElementById('file-input') as HTMLInputElement).value = ''
+      return
+    }
+
+    // If selected files exceed allowedRemaining, cancel upload (do NOT trim)
+    if (newFiles.length > allowedRemaining) {
+      toast.error(t('fileUpload.selectionExceedsLimit'))
+      setNewFiles(null)
+      ;(document.getElementById('file-input') as HTMLInputElement).value = ''
+      return
+    }
+
+    // Filter to pdfs only
+    const selectedFiles = newFiles.filter(f => f.name.toLowerCase().endsWith('.pdf'))
+    if (selectedFiles.length === 0) {
       toast.info(t('fileUpload.pdfOnly'))
       return
     }
@@ -185,7 +256,7 @@ const FileUpload: React.FC = () => {
 
     setUploading(true)
     const formData = new FormData()
-    Array.from(newFiles).forEach(file => formData.append('files', file))
+    selectedFiles.forEach(file => formData.append('files', file))
     formData.append('organization', organization)
 
     try {
@@ -194,7 +265,7 @@ const FileUpload: React.FC = () => {
       })
 
       // Get filenames for notification
-      const filenames = Array.from(newFiles).map(f => f.name)
+      const filenames = selectedFiles.map(f => f.name)
 
       // Start job tracking
       startJobPolling(data.job_id, 'pdf', filenames)
@@ -210,13 +281,40 @@ const FileUpload: React.FC = () => {
 
   /* ------------------------------------------------------------------ */
   /*  XML upload                                                        */
+  /*  (Cancel upload if selected files > remaining slots)               */
   /* ------------------------------------------------------------------ */
   const handleUploadXml = async () => {
+    // Enforce job capacity first
+    if (!canAddJob()) {
+      toast.error(t('fileUpload.maxJobsReached'))
+      return
+    }
+
     if (!newFiles?.length) {
       toast.info(t('fileUpload.chooseFile'))
       return
     }
-    if (Array.from(newFiles).some(f => !f.name.toLowerCase().endsWith('.xml'))) {
+
+    // Re-check allowed slots to prevent race conditions
+    const allowedRemaining = getAllowedRemainingSlots()
+    if (allowedRemaining === 0) {
+      toast.info(t('fileUpload.freeUserLimitReached') || `Free users can upload up to ${FREE_USER_LIMIT} files.`)
+      setNewFiles(null)
+      ;(document.getElementById('file-input') as HTMLInputElement).value = ''
+      return
+    }
+
+    // If selected files exceed allowedRemaining, cancel upload (do NOT trim)
+    if (newFiles.length > allowedRemaining) {
+      toast.error(t('fileUpload.selectionExceedsLimit'))
+      setNewFiles(null)
+      ;(document.getElementById('file-input') as HTMLInputElement).value = ''
+      return
+    }
+
+    // Filter to xml only
+    const selectedFiles = newFiles.filter(f => f.name.toLowerCase().endsWith('.xml'))
+    if (selectedFiles.length === 0) {
       toast.info(t('fileUpload.xmlOnly'))
       return
     }
@@ -226,7 +324,7 @@ const FileUpload: React.FC = () => {
 
     setUploading(true)
     const formData = new FormData()
-    Array.from(newFiles).forEach(file => formData.append('files', file))
+    selectedFiles.forEach(file => formData.append('files', file))
     formData.append('organization', organization)
 
     try {
@@ -235,7 +333,7 @@ const FileUpload: React.FC = () => {
       })
 
       // Get filenames for notification
-      const filenames = Array.from(newFiles).map(f => f.name)
+      const filenames = selectedFiles.map(f => f.name)
 
       // Start job tracking
       startJobPolling(data.job_id, 'xml', filenames)
@@ -310,6 +408,12 @@ const FileUpload: React.FC = () => {
   const companyName = getCompanyName()
   const organizations = companyName ? [] : Array.from(new Set(files.map(f => f.split('/')[0])))
 
+  // Determine user's company file count and whether to disable uploads for free users
+  const userCompanyFiles = companyName ? files.filter(f => f.startsWith(`${companyName}/`)) : files
+  const userFileCount = userCompanyFiles.length
+  const freeUserLimit = FREE_USER_LIMIT
+  const disableUploadDueToLimit = userType === 'free-user' && userFileCount >= freeUserLimit
+
   const filteredFiles = companyName
     ? files.filter(f => f.startsWith(`${companyName}/`))
     : organizationFilter === 'all'
@@ -344,13 +448,13 @@ const FileUpload: React.FC = () => {
               accept=".pdf,.xml,application/pdf,text/xml"
               onChange={handleFileChange}
               className="file-input"
-              disabled={uploading}
+              disabled={uploading || disableUploadDueToLimit}
             />
             {/* PDF button */}
             <button
               onClick={handleUploadPdf}
               className="btn btn-primary"
-              disabled={uploading}
+              disabled={uploading || disableUploadDueToLimit}
               style={{ backgroundColor: '#00CC96', borderColor: '#00CC96' }}>
               {uploading ? t('fileUpload.processing') : t('fileUpload.uploadPdfButton')}
             </button>
@@ -359,25 +463,29 @@ const FileUpload: React.FC = () => {
             <button
               onClick={handleUploadXml}
               className="btn btn-primary"
-              disabled={uploading}
-              style={{ backgroundColor: '#006DCC', borderColor: '#006DCC', marginLeft: '8px' }}>
+              disabled={uploading || disableUploadDueToLimit}
+              style={{ backgroundColor: '#006DCC', borderColor: '#006DCC' }}>
               {uploading ? t('fileUpload.processing') : t('fileUpload.uploadXmlButton')}
             </button>
 
             {/* Delete all */}
-            <button
-              onClick={handleDeleteAll}
-              className="btn btn-danger"
-              disabled={files.length === 0 || uploading}
-              style={{ marginLeft: '10px' }}>
+            <button onClick={handleDeleteAll} className="btn btn-danger" disabled={files.length === 0 || uploading}>
               {t('fileUpload.deleteAllButton')}
             </button>
+
+            {/* show free-user limit message */}
+            {disableUploadDueToLimit && (
+              <p className="upload-limit-message" style={{ marginTop: 8, color: '#b02a37' }}>
+                {t('fileUpload.freeUserLimitReached', { limit: freeUserLimit }) ||
+                  `Free users can upload up to ${freeUserLimit} files.`}
+              </p>
+            )}
           </div>
 
           {/* Filter by organisation */}
           {!companyName && (
             <div className="filter-section mb-3">
-              <label htmlFor="organization-filter">{t('fileUpload.filterLabel')} </label>
+              <label htmlFor="organization-filter">{t('fileUpload.filterLabel')} &nbsp;</label>
               <select
                 id="organization-filter"
                 value={organizationFilter}

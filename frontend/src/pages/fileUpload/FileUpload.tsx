@@ -5,11 +5,15 @@ import 'react-toastify/dist/ReactToastify.css'
 import { AppStateContext } from '../../state/AppProvider'
 import Navbar from '../../components/Navbar/Navbar'
 import { getUserInfo, UserInfo } from '../../api'
-import { FILTER_FIELD } from '../../constants/variables'
+import { FILTER_FIELD, FILTER_FIELD2 } from '../../constants/variables'
 import './FileUpload.css'
 import { useAppUser } from '../../state/AppUserProvider'
 import { useLanguage } from '../../state/LanguageContext'
 import { useBackgroundJobs } from '../../state/BackgroundJobsContext'
+
+// PDF.js for page counting
+import * as pdfjs from 'pdfjs-dist'
+pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`
 
 // Job status types
 type JobStatus = 'queued' | 'processing' | 'completed' | 'failed'
@@ -29,6 +33,8 @@ interface JobStatusResponse {
   timestamp: string
 }
 
+const FREE_USER_PDF_PAGE_LIMIT = 20 // New constant for page limit
+
 const FileUpload: React.FC = () => {
   const appStateContext = useContext(AppStateContext)
   const AUTH_ENABLED = appStateContext?.state.frontendSettings?.auth_enabled
@@ -40,11 +46,15 @@ const FileUpload: React.FC = () => {
   /*  state                                                             */
   /* ------------------------------------------------------------------ */
   const [files, setFiles] = useState<string[]>([])
-  const [newFiles, setNewFiles] = useState<FileList | null>(null)
+  // using File[] for easier handling
+  const [newFiles, setNewFiles] = useState<File[] | null>(null)
   const [uploading, setUploading] = useState<boolean>(false)
   const [organizationFilter, setOrganizationFilter] = useState<string>('all')
   const [showAuthMessage, setShowAuthMessage] = useState<boolean | undefined>()
   const [currentPage, setCurrentPage] = useState<number>(1)
+  const [userType, setUserType] = useState<string>('')
+  const [totalPdfPages, setTotalPdfPages] = useState<number>(0)
+  const [newFilesPageCount, setNewFilesPageCount] = useState<number>(0)
   const filesPerPage = 10
 
   /* ------------------------------------------------------------------ */
@@ -59,6 +69,10 @@ const FileUpload: React.FC = () => {
       setShowAuthMessage(true)
     } else {
       setShowAuthMessage(false)
+    }
+    if (userInfo && userInfo.length > 0) {
+      const userTypeClaim = userInfo[0].user_claims.find(claim => claim.typ === FILTER_FIELD2)
+      setUserType(userTypeClaim ? userTypeClaim.val.trim().toLowerCase() : '')
     }
   }, [AUTH_ENABLED, userInfo])
 
@@ -112,10 +126,86 @@ const FileUpload: React.FC = () => {
   }, [])
 
   /* ------------------------------------------------------------------ */
+  /*  PDF page count helpers                                            */
+  /* ------------------------------------------------------------------ */
+  // Fetch PDF page count when component mounts or files change
+  useEffect(() => {
+    const fetchPdfPageCount = async () => {
+      if (userType !== 'free-user') return
+
+      try {
+        const companyName = getCompanyName()
+        const { data } = await axios.get<{ total_pages: number }>(
+          `/pipeline/pdf_page_count?company=${encodeURIComponent(companyName)}`
+        )
+        setTotalPdfPages(data.total_pages)
+      } catch (error) {
+        console.error('Error fetching PDF page count:', error)
+      }
+    }
+
+    fetchPdfPageCount()
+  }, [files, userType])
+
+  // Helper function to get PDF page count
+  const getPdfPageCount = (file: File): Promise<number> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = async e => {
+        try {
+          const typedArray = new Uint8Array(e.target?.result as ArrayBuffer)
+          const pdf = await pdfjs.getDocument(typedArray).promise
+          resolve(pdf.numPages)
+        } catch (error) {
+          reject(error)
+        }
+      }
+      reader.readAsArrayBuffer(file)
+    })
+  }
+
+  // Calculate page count for new PDF files
+  useEffect(() => {
+    const calculateNewFilesPageCount = async () => {
+      if (!newFiles || userType !== 'free-user') {
+        setNewFilesPageCount(0)
+        return
+      }
+
+      let pageCount = 0
+      const pdfFiles = newFiles.filter(f => f.name.toLowerCase().endsWith('.pdf'))
+
+      for (const file of pdfFiles) {
+        try {
+          const pages = await getPdfPageCount(file)
+          pageCount += pages
+        } catch (error) {
+          console.error('Error calculating PDF page count:', error)
+        }
+      }
+
+      setNewFilesPageCount(pageCount)
+    }
+
+    calculateNewFilesPageCount()
+  }, [newFiles, userType])
+
+  // Check if free user has exceeded page limit
+  const hasExceededPageLimit = userType === 'free-user' && totalPdfPages + newFilesPageCount > FREE_USER_PDF_PAGE_LIMIT
+
+  /* ------------------------------------------------------------------ */
   /*  file input change                                                 */
+  /*  (Cancel selection entirely if user selects more than remaining)   */
   /* ------------------------------------------------------------------ */
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) setNewFiles(e.target.files)
+    const fileList = e.target.files
+    if (!fileList || fileList.length === 0) {
+      setNewFiles(null)
+      return
+    }
+
+    const selected = Array.from(fileList)
+    setNewFiles(selected)
   }
 
   /* ------------------------------------------------------------------ */
@@ -169,15 +259,35 @@ const FileUpload: React.FC = () => {
   /*  PDF upload                                                        */
   /* ------------------------------------------------------------------ */
   const handleUploadPdf = async () => {
+    // Enforce job capacity first
     if (!canAddJob()) {
       toast.error(t('fileUpload.maxJobsReached'))
       return
     }
+
     if (!newFiles?.length) {
       toast.info(t('fileUpload.chooseFile'))
       return
     }
-    if (Array.from(newFiles).some(f => !f.name.toLowerCase().endsWith('.pdf'))) {
+
+    // Check page limit for free users
+    if (hasExceededPageLimit) {
+      toast.error(
+        t('fileUpload.freeUserPageLimitReached', {
+          limit: FREE_USER_PDF_PAGE_LIMIT,
+          current: totalPdfPages,
+          adding: newFilesPageCount
+        }) ||
+          `Free users are limited to ${FREE_USER_PDF_PAGE_LIMIT} PDF pages total. Current: ${totalPdfPages}, Adding: ${newFilesPageCount}`
+      )
+      setNewFiles(null)
+      ;(document.getElementById('file-input') as HTMLInputElement).value = ''
+      return
+    }
+
+    // Filter to pdfs only
+    const selectedFiles = newFiles.filter(f => f.name.toLowerCase().endsWith('.pdf'))
+    if (selectedFiles.length === 0) {
       toast.info(t('fileUpload.pdfOnly'))
       return
     }
@@ -187,8 +297,9 @@ const FileUpload: React.FC = () => {
 
     setUploading(true)
     const formData = new FormData()
-    Array.from(newFiles).forEach(file => formData.append('files', file))
+    selectedFiles.forEach(file => formData.append('files', file))
     formData.append('organization', organization)
+    formData.append('user_type', userType) // Send user type to backend
 
     try {
       const { data } = await axios.post<{ job_id: string }>('/pipeline/upload', formData, {
@@ -196,13 +307,17 @@ const FileUpload: React.FC = () => {
       })
 
       // Get filenames for notification
-      const filenames = Array.from(newFiles).map(f => f.name)
+      const filenames = selectedFiles.map(f => f.name)
 
       // Start job tracking
       startJobPolling(data.job_id, 'pdf', filenames)
       toast.info(t('fileUpload.pdfProcessing'))
-    } catch (error) {
-      toast.error(t('fileUpload.uploadError'))
+    } catch (error: any) {
+      if (error.response?.data?.detail) {
+        toast.error(error.response.data.detail)
+      } else {
+        toast.error(t('fileUpload.uploadError'))
+      }
     } finally {
       setUploading(false)
       setNewFiles(null)
@@ -214,15 +329,20 @@ const FileUpload: React.FC = () => {
   /*  XML upload                                                        */
   /* ------------------------------------------------------------------ */
   const handleUploadXml = async () => {
+    // Enforce job capacity first
     if (!canAddJob()) {
       toast.error(t('fileUpload.maxJobsReached'))
       return
     }
+
     if (!newFiles?.length) {
       toast.info(t('fileUpload.chooseFile'))
       return
     }
-    if (Array.from(newFiles).some(f => !f.name.toLowerCase().endsWith('.xml'))) {
+
+    // Filter to xml only
+    const selectedFiles = newFiles.filter(f => f.name.toLowerCase().endsWith('.xml'))
+    if (selectedFiles.length === 0) {
       toast.info(t('fileUpload.xmlOnly'))
       return
     }
@@ -232,7 +352,7 @@ const FileUpload: React.FC = () => {
 
     setUploading(true)
     const formData = new FormData()
-    Array.from(newFiles).forEach(file => formData.append('files', file))
+    selectedFiles.forEach(file => formData.append('files', file))
     formData.append('organization', organization)
 
     try {
@@ -241,7 +361,7 @@ const FileUpload: React.FC = () => {
       })
 
       // Get filenames for notification
-      const filenames = Array.from(newFiles).map(f => f.name)
+      const filenames = selectedFiles.map(f => f.name)
 
       // Start job tracking
       startJobPolling(data.job_id, 'xml', filenames)
@@ -350,30 +470,44 @@ const FileUpload: React.FC = () => {
               accept=".pdf,.xml,application/pdf,text/xml"
               onChange={handleFileChange}
               className="file-input"
-              disabled={uploading}
+              disabled={uploading || hasExceededPageLimit}
             />
             {/* PDF button */}
             <button
               onClick={handleUploadPdf}
               className="btn btn-primary"
-              disabled={uploading}
+              disabled={uploading || hasExceededPageLimit}
               style={{ backgroundColor: '#00CC96', borderColor: '#00CC96' }}>
               {uploading ? t('fileUpload.processing') : t('fileUpload.uploadPdfButton')}
             </button>
 
-            {/* XML button */}
-            <button
-              onClick={handleUploadXml}
-              className="btn btn-primary"
-              disabled={uploading}
-              style={{ backgroundColor: '#006DCC', borderColor: '#006DCC' }}>
-              {uploading ? t('fileUpload.processing') : t('fileUpload.uploadXmlButton')}
-            </button>
+            {/* XML button - hidden for free users */}
+            {userType !== 'free-user' && (
+              <button
+                onClick={handleUploadXml}
+                className="btn btn-primary"
+                disabled={uploading}
+                style={{ backgroundColor: '#006DCC', borderColor: '#006DCC' }}>
+                {uploading ? t('fileUpload.processing') : t('fileUpload.uploadXmlButton')}
+              </button>
+            )}
 
             {/* Delete all */}
             <button onClick={handleDeleteAll} className="btn btn-danger" disabled={files.length === 0 || uploading}>
               {t('fileUpload.deleteAllButton')}
             </button>
+
+            {/* show free-user page limit message */}
+            {hasExceededPageLimit && (
+              <p className="upload-limit-message" style={{ marginTop: 8, color: '#b02a37' }}>
+                {t('fileUpload.freeUserPageLimitReached', {
+                  limit: FREE_USER_PDF_PAGE_LIMIT,
+                  current: totalPdfPages,
+                  adding: newFilesPageCount
+                }) ||
+                  `Free users are limited to ${FREE_USER_PDF_PAGE_LIMIT} PDF pages total. Current: ${totalPdfPages}, Adding: ${newFilesPageCount}`}
+              </p>
+            )}
           </div>
 
           {/* Filter by organisation */}

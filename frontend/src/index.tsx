@@ -20,6 +20,7 @@ import SystemMessage from './pages/systemMessage/SystemMessage'
 import { AppUserProvider } from './state/AppUserProvider'
 import { LanguageProvider } from './state/LanguageContext'
 import { BackgroundJobsProvider } from './state/BackgroundJobsContext'
+import AdminPanel from './pages/admin/AdminPanel'
 
 initializeIcons('https://res.cdn.office.net/files/fabric-cdn-prod_20240129.001/assets/icons/')
 
@@ -38,6 +39,7 @@ export default function App() {
                 <Route path="/upload-files" element={<FileUpload />} />
                 <Route path="/history" element={<History />} />
                 <Route path="/system-message" element={<SystemMessage />} />
+                <Route path="/admin-panel" element={<AdminPanel />} />
               </Routes>
             </HashRouter>
           </BackgroundJobsProvider>

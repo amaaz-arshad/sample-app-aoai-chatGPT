@@ -59,6 +59,7 @@ from datetime import datetime
 from queue import Queue
 from threading import Thread, Event
 import queue
+from azure.identity.aio import ClientSecretCredential  # async version
 
 load_dotenv() 
 
@@ -1271,35 +1272,99 @@ async def upload_files():
     form = await request.form
     files = (await request.files).getlist("files")
     organization = form.get("organization", "").strip().lower().strip('.')
-    
+    user_type = form.get("user_type", "").strip().lower()  # Get user type from frontend
+
     if not organization:
         return jsonify({"detail": "Missing 'organization' field."}), 400
-    
+
+    # Helper to run synchronous search in a thread
+    def collect_pdf_files_from_search(filter_expr: str):
+        """Run the synchronous azure search and return {filename: total_pages}."""
+        # Use a different approach - get unique files and their page counts
+        results = search_client.search(
+            search_text="*",
+            filter=filter_expr,
+            select="file, total_pages",
+            include_total_count=True
+        )
+        
+        pdf_files_local = {}
+        processed_files = set()
+        
+        for result in results:
+            filename = result.get("file")
+            
+            if not filename or filename in processed_files:
+                continue
+                
+            # For PDF files, we should have total_pages field
+            total_pages = result.get("total_pages")
+            if total_pages is not None:
+                try:
+                    pdf_files_local[filename] = int(total_pages)
+                    processed_files.add(filename)
+                except (ValueError, TypeError):
+                    pdf_files_local[filename] = 0
+                    processed_files.add(filename)
+                    
+        return pdf_files_local
+
+    # Check page limit for free users
+    if user_type == "free-user":
+        escaped = _escape_odata_string(organization)
+        filter_expr = f"organization eq '{escaped}'"
+        try:
+            pdf_files = await asyncio.to_thread(collect_pdf_files_from_search, filter_expr)
+            existing_pages = sum(pdf_files.values()) if pdf_files else 0
+        except Exception:
+            logging.exception("Unexpected error when checking existing pages")
+            existing_pages = 0
+
+        # Calculate pages in new PDF files
+        new_pages = 0
+        for uploaded_file in files:
+            if uploaded_file.filename.lower().endswith('.pdf'):
+                content = uploaded_file.read()
+                doc = fitz.open(stream=content, filetype="pdf")
+                new_pages += doc.page_count
+                doc.close()
+                uploaded_file.seek(0)  # Reset file pointer for processing
+
+        if existing_pages + new_pages > 20:  # Free user limit
+            return jsonify({
+                "detail": f"Free users are limited to 20 PDF pages total. "
+                          f"Current: {existing_pages}, New: {new_pages}"
+            }), 400
+
     # Check if queue is full
     if upload_queue.qsize() >= JOB_QUEUE_MAX_SIZE:
         return jsonify({"detail": "Upload queue is full. Please try again later."}), 503
-    
+
     job_id = str(uuid.uuid4())
-    
+
     # Capture file content immediately before files are closed
     file_data = []
     for uploaded_file in files:
+        # Make sure file pointer is at start
+        try:
+            uploaded_file.seek(0)
+        except Exception:
+            pass
         file_data.append({
             "filename": uploaded_file.filename,
             "content": uploaded_file.read(),
             "organization": organization
         })
-    
+
     # Add job to queue instead of processing immediately
     upload_queue.put((job_id, file_data, False))
     update_job_status(job_id, "queued", result={"position_in_queue": upload_queue.qsize()})
-    
+
     return jsonify({
         "job_id": job_id,
         "message": "Files added to processing queue",
         "position_in_queue": upload_queue.qsize()
     }), 202
-
 
 # Route to delete all files or files by companyClaim or organizationFilter
 @bp.route("/pipeline/delete_all", methods=["DELETE"])
@@ -2031,5 +2096,130 @@ async def get_job_status(job_id: str):
             position += 1
     
     return jsonify(response_data)
+
+@bp.route("/pipeline/pdf_page_count", methods=["GET"])
+async def get_pdf_page_count():
+    company_name = request.args.get("company", "").strip().lower().strip('.')
+
+    if not company_name:
+        return jsonify({"total_pages": 0})
+
+    # Escape company name for OData filter
+    escaped = _escape_odata_string(company_name)
+    # Use endswith properly: endswith(file, '.pdf')
+    filter_expr = f"organization eq '{escaped}'"
+
+    try:
+        pdf_files = await asyncio.to_thread(collect_pdf_files_from_search, filter_expr)
+        total_pages = sum(pdf_files.values()) if pdf_files else 0
+    except Exception:
+        logging.exception("Azure Search HttpResponseError when fetching pdf page count")
+        # return a safe response rather than crash
+        return jsonify({"total_pages": 0, "error": "search_error"}), 200
+    except Exception:
+        logging.exception("Unexpected error when fetching pdf page count")
+        return jsonify({"total_pages": 0, "error": "internal_error"}), 200
+
+    return jsonify({"total_pages": total_pages})
+
+def _escape_odata_string(s: str) -> str:
+    # OData string literal single quotes must be doubled
+    return s.replace("'", "''")
+
+def collect_pdf_files_from_search(filter_expr: str):
+    """Run the synchronous azure search and return {filename: total_pages}."""
+    # Use a different approach - get unique files and their page counts
+    results = search_client.search(
+        search_text="*",
+        filter=filter_expr,
+        select="file, total_pages",
+        include_total_count=True
+    )
+    
+    pdf_files_local = {}
+    processed_files = set()
+    
+    for result in results:
+        filename = result.get("file")
+        
+        if not filename or filename in processed_files:
+            continue
+            
+        # For PDF files, we should have total_pages field
+        total_pages = result.get("total_pages")
+        if total_pages is not None:
+            try:
+                pdf_files_local[filename] = int(total_pages)
+                processed_files.add(filename)
+            except (ValueError, TypeError):
+                pdf_files_local[filename] = 0
+                processed_files.add(filename)
+                
+    return pdf_files_local
+
+@bp.route("/users/list", methods=["GET"])
+async def list_b2c_users_for_tenant():
+    """
+    Lists users from a specific B2C tenant using client credentials.
+    Requires these env vars:
+      B2C_TENANT_ID         -> the tenant id GUID or tenant domain (e.g. snapdeai.onmicrosoft.com)
+      B2C_CLIENT_ID         -> app registration (client) id in that tenant
+      B2C_CLIENT_SECRET     -> client secret for the app registration
+    The app must have Application permission User.Read.All (or similar) with admin consent.
+    """
+    try:
+        tenant = os.getenv("B2C_TENANT_ID")
+        client_id = os.getenv("B2C_CLIENT_ID")
+        client_secret = os.getenv("B2C_CLIENT_SECRET")
+
+        if not (tenant and client_id and client_secret):
+            return jsonify({"error": "Missing B2C_TENANT_ID, B2C_CLIENT_ID or B2C_CLIENT_SECRET env vars"}), 500
+
+        # Use the async client credential targeted at the B2C tenant
+        credential = ClientSecretCredential(
+            tenant_id=tenant,
+            client_id=client_id,
+            client_secret=client_secret
+        )
+
+        # Acquire token for Microsoft Graph (application scope)
+        token = await credential.get_token("https://graph.microsoft.com/.default")
+        access_token = token.token
+
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        }
+
+        users = []
+        url = (
+            "https://graph.microsoft.com/v1.0/users?"
+            "$select=id,displayName,userPrincipalName,identities,streetAddress,city"
+        )
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            while url:
+                resp = await client.get(url, headers=headers)
+                if resp.status_code != 200:
+                    text = await resp.aread()
+                    await credential.close()
+                    return jsonify({
+                        "error": f"Graph API error: {resp.status_code}",
+                        "details": text.decode(errors="ignore")
+                    }), resp.status_code
+
+                body = resp.json()
+                users.extend(body.get("value", []))
+
+                # paging
+                url = body.get("@odata.nextLink")
+
+        await credential.close()
+        return jsonify({"value": users}), 200
+
+    except Exception as e:
+        logging.exception("Exception in /users/list endpoint")
+        return jsonify({"error": str(e)}), 500
+
 
 app = create_app()

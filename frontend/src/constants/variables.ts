@@ -92,6 +92,8 @@ export const translations: Record<Language, Record<string, string>> = {
     'fileUpload.filesProcessing': 'Files are being processed...',
     'fileUpload.maxJobsReached':
       'Maximum of 5 concurrent uploads reached. Please wait for current uploads to complete.',
+    'fileUpload.freeUserLimitReached': 'Free users can upload up to 3 files.',
+    'fileUpload.selectionExceedsLimit': 'Selected number of files exceeds the limit',
 
     // Chat component translations
     'chat.title': 'Ask me a question!',
@@ -268,7 +270,9 @@ export const translations: Record<Language, Record<string, string>> = {
     'fileUpload.filesProcessing': 'Dateien werden verarbeitet...',
     'fileUpload.maxJobsReached':
       'Maximale Anzahl von 5 gleichzeitigen Uploads erreicht. Bitte warten Sie, bis die aktuellen Uploads abgeschlossen sind.',
-
+    'fileUpload.freeUserLimitReached': 'Kostenlose Benutzer können bis zu 3 Dateien hochladen.',
+    'fileUpload.selectionExceedsLimit': 'Die ausgewählte Anzahl von Dateien überschreitet das Limit',
+    
     // Chat component translations
     'chat.title': 'Stell mir eine Frage!',
     'chat.subtitle': 'Dieser Chatbot kann deine Fragen beantworten',

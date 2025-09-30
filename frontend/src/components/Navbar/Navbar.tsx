@@ -106,16 +106,18 @@ export default function Navbar() {
                     to="/system-message">
                     {t('navbar.systemMessage')}
                   </NavLink>
+                  <NavLink
+                    className={({ isActive }) => (isActive ? 'nav-link active fw-bold me-2' : 'nav-link fw-bold me-2')}
+                    to="/admin-panel">
+                    Admin Panel
+                  </NavLink>
                 </>
               )}
 
               {/* Logout button */}
-              <NavLink
-                to=""
-                className={({ isActive }) => (isActive ? 'nav-link active fw-bold me-2' : 'nav-link fw-bold me-2')}
-                onClick={handleLogout}>
+              <button className="nav-link fw-bold me-2" onClick={handleLogout}>
                 {t('navbar.logout')}
-              </NavLink>
+              </button>
             </div>
           </div>
 

@@ -60,6 +60,15 @@ from queue import Queue
 from threading import Thread, Event
 import queue
 from azure.identity.aio import ClientSecretCredential  # async version
+# Add to existing imports
+import tiktoken
+
+# Add pricing constants (GPT-4o pricing as of 2024)
+GPT4O_INPUT_PRICE_PER_1K_TOKENS = 0.0025  # $2.50 per 1M tokens
+GPT4O_OUTPUT_PRICE_PER_1K_TOKENS = 0.01  # $10.00 per 1M tokens
+
+# Collection name for estimated costs
+ESTIMATED_COSTS_COLLECTION = "estimated_costs"
 
 load_dotenv() 
 
@@ -612,10 +621,38 @@ async def complete_chat_request(request_body, request_headers):
 async def stream_chat_request(request_body, request_headers):
     response, apim_request_id = await send_chat_request(request_body, request_headers)
     history_metadata = request_body.get("history_metadata", {})
+    conversation_id = request_body.get("conversation_id")
+    
+    # Get authenticated user for cost tracking
+    authenticated_user = get_authenticated_user_details(request_headers)
+    user_question = ""
+    
+    # Extract user question from request messages
+    messages = request_body.get("messages", [])
+    for message in reversed(messages):
+        if message.get("role") == "user":
+            user_question = message.get("content", "")
+            break
+    
+    # For streaming, we need to collect the complete response
+    full_assistant_response = ""
     
     async def generate():
+        nonlocal full_assistant_response
         async for completionChunk in response:
+            # Extract content from the chunk
+            if completionChunk.choices and completionChunk.choices[0].delta.content:
+                content = completionChunk.choices[0].delta.content
+                full_assistant_response += content
+            
             yield format_stream_response(completionChunk, history_metadata, apim_request_id)
+        
+        # After streaming is complete, update costs in background
+        if user_question and full_assistant_response:
+            # Use asyncio.create_task to run in background without blocking
+            asyncio.create_task(
+                update_estimated_costs(authenticated_user, user_question, full_assistant_response, conversation_id)
+            )
 
     return generate()
 
@@ -2219,6 +2256,137 @@ async def list_b2c_users_for_tenant():
 
     except Exception as e:
         logging.exception("Exception in /users/list endpoint")
+        return jsonify({"error": str(e)}), 500
+
+def count_tokens(text: str, model: str = "gpt-4") -> int:
+    """Count tokens in text using tiktoken"""
+    try:
+        encoding = tiktoken.encoding_for_model(model)
+        return len(encoding.encode(text))
+    except Exception as e:
+        logging.error(f"Error counting tokens: {e}")
+        # Fallback: approximate token count (4 characters per token)
+        return len(text) // 4
+
+def calculate_cost(input_tokens: int, output_tokens: int) -> float:
+    """Calculate cost based on GPT-4o pricing"""
+    input_cost = (input_tokens / 1000) * GPT4O_INPUT_PRICE_PER_1K_TOKENS
+    output_cost = (output_tokens / 1000) * GPT4O_OUTPUT_PRICE_PER_1K_TOKENS
+    return round(input_cost + output_cost, 6)
+
+async def update_estimated_costs(authenticated_user: dict, user_question: str, assistant_answer: str, conversation_id: str = None):
+    """Update estimated costs for a user in CosmosDB"""
+    try:
+        user_id = authenticated_user["user_principal_id"]
+        user_name = authenticated_user["user_name"]
+        
+        # Count tokens
+        input_tokens = count_tokens(user_question)
+        output_tokens = count_tokens(assistant_answer)
+        cost = calculate_cost(input_tokens, output_tokens)
+        
+        # Get CosmosDB container
+        database = cosmos_client.get_database_client(app_settings.chat_history.database)
+        
+        # Create collection if it doesn't exist
+        existing_collections = [coll['id'] for coll in database.list_containers()]
+        if ESTIMATED_COSTS_COLLECTION not in existing_collections:
+            database.create_container(
+                id=ESTIMATED_COSTS_COLLECTION, 
+                partition_key=PartitionKey(path='/user_id')
+            )
+            logging.info(f"Created collection '{ESTIMATED_COSTS_COLLECTION}'.")
+        
+        container = database.get_container_client(ESTIMATED_COSTS_COLLECTION)
+        
+        # Check if user already has a cost record
+        query = f"SELECT * FROM c WHERE c.user_id = '{user_id}'"
+        results = list(container.query_items(query=query, enable_cross_partition_query=True))
+        
+        if results:
+            # Update existing record
+            user_cost_record = results[0]
+            user_cost_record["total_cost"] += cost
+            user_cost_record["total_input_tokens"] += input_tokens
+            user_cost_record["total_output_tokens"] += output_tokens
+            user_cost_record["last_updated"] = datetime.utcnow().isoformat()
+            user_cost_record["conversation_count"] = user_cost_record.get("conversation_count", 0) + 1
+            
+            # Store individual conversation details in history array
+            conversation_detail = {
+                "id": str(uuid.uuid4()),
+                "conversation_id": conversation_id,
+                "timestamp": datetime.utcnow().isoformat(),
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cost": cost,
+                "user_question_preview": user_question[:100] + "..." if len(user_question) > 100 else user_question
+            }
+            
+            if "conversation_history" not in user_cost_record:
+                user_cost_record["conversation_history"] = []
+            
+            user_cost_record["conversation_history"].append(conversation_detail)
+            # Keep only last 100 conversations to prevent document from growing too large
+            if len(user_cost_record["conversation_history"]) > 100:
+                user_cost_record["conversation_history"] = user_cost_record["conversation_history"][-100:]
+            
+            container.upsert_item(user_cost_record)
+        else:
+            # Create new record
+            new_record = {
+                "id": str(uuid.uuid4()),
+                "user_id": user_id,
+                "user_name": user_name,
+                "total_cost": cost,
+                "total_input_tokens": input_tokens,
+                "total_output_tokens": output_tokens,
+                "conversation_count": 1,
+                "first_created": datetime.utcnow().isoformat(),
+                "last_updated": datetime.utcnow().isoformat(),
+                "conversation_history": [
+                    {
+                        "id": str(uuid.uuid4()),
+                        "conversation_id": conversation_id,
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "cost": cost,
+                        "user_question_preview": user_question[:100] + "..." if len(user_question) > 100 else user_question
+                    }
+                ]
+            }
+            container.create_item(new_record)
+        
+        logging.info(f"Updated cost for user {user_name}: ${cost} (Input: {input_tokens}, Output: {output_tokens} tokens)")
+        
+    except Exception as e:
+        logging.error(f"Error updating estimated costs: {e}")
+
+@bp.route("/costs/all", methods=["GET"])
+async def get_all_costs():
+    """Get cost information for all users (admin endpoint)"""
+    try:
+        database = cosmos_client.get_database_client(app_settings.chat_history.database)
+        
+        # Check if collection exists
+        existing_collections = [coll['id'] for coll in database.list_containers()]
+        if ESTIMATED_COSTS_COLLECTION not in existing_collections:
+            return jsonify([])
+        
+        container = database.get_container_client(ESTIMATED_COSTS_COLLECTION)
+        
+        # Query all cost records
+        query = "SELECT * FROM c"
+        results = list(container.query_items(query=query, enable_cross_partition_query=True))
+        
+        # Return sorted by total_cost descending
+        sorted_results = sorted(results, key=lambda x: x.get("total_cost", 0), reverse=True)
+        
+        return jsonify(sorted_results)
+            
+    except Exception as e:
+        logging.error(f"Error retrieving all costs: {e}")
         return jsonify({"error": str(e)}), 500
 
 

@@ -21,8 +21,10 @@ export const logos = {
     publishone: publishOneNav,
     vjoon: vjoonNav,
     'vjoon k4': vjoonNav,
+    'vjoon gmbh': vjoonNav,
     agindo: agindoNav,
     lemon: lemonNav,
+    lemon2: lemonNav,
     pinkvoss: pinkvoss
   },
   chat: {
@@ -30,8 +32,10 @@ export const logos = {
     publishone: publishOneChat,
     vjoon: vjoonChat,
     'vjoon k4': vjoonChat,
+    'vjoon gmbh': vjoonChat,
     agindo: agindoChat,
     lemon: lemonChat,
+    lemon2: lemonChat,
     pinkvoss: pinkvoss
   }
 }
@@ -110,7 +114,7 @@ export const translations: Record<Language, Record<string, string>> = {
       "An error occurred. Answers can't be saved at this time. If the problem persists, please contact the site administrator.",
     'chat.historyDisabled': 'Chat history is not enabled',
     'chat.contactAdmin': 'Please contact the site administrator.',
-    'chat.generatingAnswer': 'Generating answer...',
+    'chat.generatingAnswer': 'Chatbot is thinking...',
     'chat.stopGenerating': 'Stop generating',
     'chat.inputPlaceholder': 'Type a new question...',
     'chat.close': 'Close',
@@ -272,7 +276,7 @@ export const translations: Record<Language, Record<string, string>> = {
       'Maximale Anzahl von 5 gleichzeitigen Uploads erreicht. Bitte warten Sie, bis die aktuellen Uploads abgeschlossen sind.',
     'fileUpload.freeUserLimitReached': 'Kostenlose Benutzer können bis zu 3 Dateien hochladen.',
     'fileUpload.selectionExceedsLimit': 'Die ausgewählte Anzahl von Dateien überschreitet das Limit',
-    
+
     // Chat component translations
     'chat.title': 'Stell mir eine Frage!',
     'chat.subtitle': 'Dieser Chatbot kann deine Fragen beantworten',
@@ -290,7 +294,7 @@ export const translations: Record<Language, Record<string, string>> = {
       'Ein Fehler ist aufgetreten. Antworten können derzeit nicht gespeichert werden. Wenn das Problem weiterhin besteht, wenden Sie sich an den Administrator der Website.',
     'chat.historyDisabled': 'Chatverlauf ist nicht aktiviert',
     'chat.contactAdmin': 'Bitte wenden Sie sich an den Administrator der Website.',
-    'chat.generatingAnswer': 'Antwort wird generiert...',
+    'chat.generatingAnswer': 'Chatbot denkt nach...',
     'chat.stopGenerating': 'Beantwortung abbrechen',
     'chat.inputPlaceholder': 'Neue Frage eingeben...',
     'chat.close': 'Schließen',

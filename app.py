@@ -62,6 +62,8 @@ import queue
 from azure.identity.aio import ClientSecretCredential  # async version
 # Add to existing imports
 import tiktoken
+from typing import List, Dict
+import random
 
 # Add pricing constants (GPT-4o pricing as of 2024)
 GPT4O_INPUT_PRICE_PER_1K_TOKENS = 0.0025  # $2.50 per 1M tokens
@@ -133,6 +135,8 @@ JOB_EXPIRY_SECONDS = 86400  # 24 hours
 # Add these constants near the top with other settings
 MAX_QUEUE_WORKERS = 1  # Process one batch at a time
 JOB_QUEUE_MAX_SIZE = 100  # Maximum jobs in queue
+
+conversation_context_cache = {}
 
 # Queue worker function
 def queue_worker():
@@ -402,11 +406,8 @@ async def prepare_model_args(request_body, request_headers):
     
     # Retrieve the system message from Cosmos DB for the authenticated user
     authenticated_user = get_authenticated_user_details(request_headers)
-    logging.info(f"Authenticated user details: {authenticated_user}")
-    logging.info(f"auth user id token: {authenticated_user['aad_id_token']}")
-    # print(f"authenticated_user: {authenticated_user}")
     user_id = authenticated_user["user_principal_id"]
-    system_message = app_settings.azure_openai.system_message  # Fallback value in case no custom message is found
+    system_message = app_settings.azure_openai.system_message
 
     try:
         # Get the CosmosDB container for system messages
@@ -418,20 +419,118 @@ async def prepare_model_args(request_body, request_headers):
         results = list(container.query_items(query=query, enable_cross_partition_query=True))
 
         if results:
-            # If a system message exists for the user, use that
             system_message = results[0]["system_message"]
     except Exception as e:
         logging.error(f"Error retrieving system message for user {user_id}: {e}")
 
-    # Add the system message to the messages array
+    # Add the system message to the messages array (unchanged)
     if not app_settings.datasource:
         messages = [
             {
                 "role": "system",
-                "content": system_message 
+                "content": system_message
             }
         ]
     
+    # Get organization context (FRESH fetch when starting new conversation, cached for existing conversations)
+    companyName = request_body.get("companyName", "").strip()
+    conversation_id = request_body.get("conversation_id")
+    
+    # Check if this is a new conversation (first user message)
+    user_messages = [msg for msg in request_messages if msg.get("role") == "user"]
+    is_new_conversation = len(user_messages) <= 1
+    
+    organization_context = None
+    
+    if conversation_id:
+        # Use conversation_id as cache key
+        cache_key = f"{conversation_id}_{companyName}"
+        
+        # For NEW conversations, always fetch fresh organization context
+        if is_new_conversation:
+            try:
+                if companyName:
+                    logging.info(f"NEW CONVERSATION - Fresh fetching documents for organization: {companyName}")
+                else:
+                    logging.info("NEW CONVERSATION - Fresh fetching documents from all organizations")
+                
+                organization_docs = await get_organization_documents(companyName, max_tokens=4000)
+                
+                if organization_docs:
+                    organization_context = format_documents_for_context(organization_docs, companyName)
+                    total_tokens = sum(doc["token_count"] for doc in organization_docs)
+                    
+                    if companyName:
+                        logging.info(f"Fresh fetched {len(organization_docs)} documents for organization {companyName}")
+                    else:
+                        logging.info(f"Fresh fetched {len(organization_docs)} documents from all organizations")
+                else:
+                    if companyName:
+                        organization_context = f"No documents found for organization '{companyName}'."
+                    else:
+                        organization_context = "No documents found in the system."
+                    logging.info(organization_context)
+                
+                # Cache the fresh result for this conversation
+                conversation_context_cache[cache_key] = organization_context
+                logging.info(f"Cached fresh organization context for new conversation: {conversation_id}")
+                
+            except Exception as e:
+                logging.error(f"Error fetching documents for new conversation: {e}")
+                organization_context = f"Error retrieving documents: {str(e)}"
+                # Cache the error too
+                conversation_context_cache[cache_key] = organization_context
+        else:
+            # EXISTING conversation - use cached organization context
+            if cache_key in conversation_context_cache:
+                organization_context = conversation_context_cache[cache_key]
+                logging.info(f"Using cached organization context for existing conversation {conversation_id}")
+            else:
+                # This shouldn't happen normally, but if cache is missing, fetch fresh
+                logging.warning(f"Missing cache for existing conversation {conversation_id}, fetching fresh")
+                try:
+                    organization_docs = await get_organization_documents(companyName, max_tokens=4000)
+                    if organization_docs:
+                        organization_context = format_documents_for_context(organization_docs, companyName)
+                    else:
+                        organization_context = f"No documents found for organization '{companyName}'." if companyName else "No documents found in the system."
+                    
+                    conversation_context_cache[cache_key] = organization_context
+                except Exception as e:
+                    logging.error(f"Error fetching documents: {e}")
+                    organization_context = f"Error retrieving documents: {str(e)}"
+    else:
+        # No conversation_id - this is a temporary new conversation
+        try:
+            if companyName:
+                logging.info(f"TEMPORARY NEW CONVERSATION - Fresh fetching documents for organization: {companyName}")
+            else:
+                logging.info("TEMPORARY NEW CONVERSATION - Fresh fetching documents from all organizations")
+            
+            organization_docs = await get_organization_documents(companyName, max_tokens=4000)
+            
+            if organization_docs:
+                organization_context = format_documents_for_context(organization_docs, companyName)
+            else:
+                if companyName:
+                    organization_context = f"No documents found for organization '{companyName}'."
+                else:
+                    organization_context = "No documents found in the system."
+            
+            logging.info(f"Fresh fetched organization context for temporary conversation")
+            
+        except Exception as e:
+            logging.error(f"Error fetching documents for temporary conversation: {e}")
+            organization_context = f"Error retrieving documents: {str(e)}"
+    
+    # Add organization context to messages array (FOR EVERY MESSAGE)
+    if organization_context:
+        messages.append({
+            "role": "system",
+            "content": organization_context
+        })
+
+    # Now add the conversation messages from the request
     for message in request_messages:
         if message:
             if message["role"] == "assistant" and "context" in message:
@@ -458,6 +557,9 @@ async def prepare_model_args(request_body, request_headers):
         application_name = app_settings.ui.title
         user_json = get_msdefender_user_json(authenticated_user_details, request_headers, conversation_id, application_name)
 
+    # print(f"System message used: {system_message}")
+    print(f"Final messages array: {messages}")
+
     model_args = {
         "messages": messages,
         "temperature": app_settings.azure_openai.temperature,
@@ -477,18 +579,18 @@ async def prepare_model_args(request_body, request_headers):
         if "parameters" not in data_source_config:
             data_source_config["parameters"] = {}
 
-        # Assign retrieved system message to role_information
+        # Use the original system message (unchanged) for role_information
         data_source_config["parameters"]["role_information"] = system_message
         
         # Get the companyName from the request body
-        companyName = request_body.get("companyName")
-        print("companyName:", companyName)
+        companyName = request_body.get("companyName", "").strip()
         
         # Apply the filter only if companyName has a value
         if companyName:
             # Convert companyName to lowercase
-            companyName = companyName.strip().lower().strip('.')
+            companyName = companyName.lower().strip('.')
             data_source_config["parameters"]["filter"] = f"organization eq '{companyName}'"
+        # If companyName is empty, no filter will be applied in the data source
 
         public_base_url = request.url_root.rstrip("/").replace("http://", "https://")
         data_source_config["parameters"]["embedding_dependency"] = {
@@ -543,7 +645,6 @@ async def prepare_model_args(request_body, request_headers):
 
     logging.debug(f"REQUEST BODY: {json.dumps(model_args_clean, indent=4)}")
 
-    # print(f"model_args: {model_args}")
     return model_args
 
 
@@ -2388,6 +2489,326 @@ async def get_all_costs():
     except Exception as e:
         logging.error(f"Error retrieving all costs: {e}")
         return jsonify({"error": str(e)}), 500
+
+
+# Enhanced version that can use different strategies randomly
+async def get_organization_documents_enhanced(organization: str, max_tokens: int = 6000) -> List[Dict]:
+    """
+    Enhanced version that randomly selects different document selection strategies
+    """
+    try:
+        # Build filter expression - if organization is empty, don't filter
+        if organization and organization.strip():
+            escaped_organization = organization.replace("'", "''")
+            filter_expression = f"organization eq '{escaped_organization}'"
+        else:
+            filter_expression = None
+        
+        # Search with or without filter
+        if filter_expression:
+            all_results = search_client.search(
+                search_text="*",
+                filter=filter_expression,
+                select="id, content, title, file, page, total_pages",
+                top=1000
+            )
+        else:
+            all_results = search_client.search(
+                search_text="*", 
+                select="id, content, title, file, page, total_pages, organization",
+                top=1000
+            )
+        
+        documents = []
+        for result in all_results:
+            documents.append({
+                "id": result.get("id"),
+                "content": result.get("content", ""),
+                "title": result.get("title", ""),
+                "file": result.get("file", ""),
+                "page": result.get("page", 0),
+                "total_pages": result.get("total_pages", 0),
+                "organization": result.get("organization", ""),
+                "token_count": count_tokens(result.get("content", ""))
+            })
+        
+        if not documents:
+            return []
+        
+        # Randomly choose a selection strategy
+        strategies = [
+            select_random_diverse_documents,
+            lambda docs, tokens: select_documents_by_length(docs, tokens),
+            lambda docs, tokens: select_documents_by_recency(docs, min(10, len(docs)))
+        ]
+        
+        selected_strategy = random.choice(strategies)
+        selected_docs = selected_strategy(documents, max_tokens)
+        
+        logging.info(f"Used strategy {selected_strategy.__name__} to select {len(selected_docs)} documents")
+        return selected_docs
+        
+    except Exception as e:
+        logging.error(f"Error getting organization documents: {e}")
+        return []
+
+
+async def get_organization_documents(organization: str, max_tokens: int = 6000) -> List[Dict]:
+    """
+    Get representative documents for an organization with randomization
+    If organization is empty, get documents from all organizations
+    """
+    try:
+        # Build filter expression - if organization is empty, don't filter
+        if organization and organization.strip():
+            escaped_organization = organization.replace("'", "''")
+            filter_expression = f"organization eq '{escaped_organization}'"
+        else:
+            filter_expression = None
+            logging.info("No organization specified, searching across all documents")
+        
+        # Search with or without filter
+        if filter_expression:
+            all_results = search_client.search(
+                search_text="*",
+                filter=filter_expression,
+                select="id, content, title, file, page, total_pages",
+                top=1000  # Get more documents to allow for randomization
+            )
+        else:
+            all_results = search_client.search(
+                search_text="*",
+                select="id, content, title, file, page, total_pages, organization",
+                top=1000
+            )
+        
+        documents = []
+        for result in all_results:
+            documents.append({
+                "id": result.get("id"),
+                "content": result.get("content", ""),
+                "title": result.get("title", ""),
+                "file": result.get("file", ""),
+                "page": result.get("page", 0),
+                "total_pages": result.get("total_pages", 0),
+                "organization": result.get("organization", ""),
+                "token_count": count_tokens(result.get("content", ""))
+            })
+        
+        if not documents:
+            if organization and organization.strip():
+                logging.info(f"No documents found for organization: {organization}")
+            else:
+                logging.info("No documents found in the search index")
+            return []
+        
+        # Shuffle the documents to get random order
+        random.shuffle(documents)
+        
+        # Select diverse documents with randomization
+        selected_docs = select_random_diverse_documents(documents, max_tokens)
+        
+        logging.info(f"Selected {len(selected_docs)} random documents from {len(documents)} total")
+        return selected_docs
+        
+    except Exception as e:
+        logging.error(f"Error getting organization documents: {e}")
+        
+
+def format_documents_for_context(documents: List[Dict], organization: str = "") -> str:
+    """
+    Format selected documents into a coherent context string
+    """
+    if not documents:
+        if organization and organization.strip():
+            return f"No documents available for organization '{organization}'."
+        else:
+            return "No documents available in the system."
+    
+    # context_parts = ["DOCUMENT CONTEXT:\n"]
+    context_parts = ["Here is a part of my data/documents. Answer questions based on this content:\n\n\n"]
+    
+    # if organization and organization.strip():
+    #     context_parts.append(f"Found {len(documents)} relevant documents for organization '{organization}':\n")
+    # else:
+    #     context_parts.append(f"Found {len(documents)} relevant documents from all organizations:\n")
+    
+    for i, doc in enumerate(documents, 1):
+        context_parts.append(f"\n--- Document {i}: {doc.get('title', 'Untitled')} ---")
+        context_parts.append(f"Source: {doc.get('file', 'Unknown file')}")
+        context_parts.append(f"Content: {doc['content']}\n")
+    
+    return "\n".join(context_parts)
+
+
+def select_random_diverse_documents(documents: List[Dict], max_tokens: int) -> List[Dict]:
+    """
+    Select diverse documents using multiple randomization strategies
+    """
+    if not documents:
+        return []
+    
+    selected = []
+    current_tokens = 0
+    
+    # Strategy 1: Group by file and pick random documents from different files
+    files_dict = {}
+    for doc in documents:
+        file_name = doc.get("file", "")
+        if file_name not in files_dict:
+            files_dict[file_name] = []
+        files_dict[file_name].append(doc)
+    
+    # Shuffle the files and pick one random document from each
+    file_names = list(files_dict.keys())
+    random.shuffle(file_names)
+    
+    for file_name in file_names:
+        if not files_dict[file_name]:
+            continue
+            
+        # Pick a random document from this file
+        random_doc = random.choice(files_dict[file_name])
+        
+        if current_tokens + random_doc["token_count"] <= max_tokens:
+            selected.append(random_doc)
+            current_tokens += random_doc["token_count"]
+        else:
+            # Try to truncate if it's valuable but too long
+            truncated_doc = truncate_document(random_doc, max_tokens - current_tokens)
+            if truncated_doc:
+                selected.append(truncated_doc)
+                break
+    
+    # Strategy 2: If we still have space, add random documents regardless of file
+    remaining_docs = [doc for doc in documents if doc not in selected]
+    random.shuffle(remaining_docs)
+    
+    for doc in remaining_docs:
+        if current_tokens + doc["token_count"] <= max_tokens:
+            selected.append(doc)
+            current_tokens += doc["token_count"]
+        else:
+            break
+    
+    # Strategy 3: If we have very few documents, try to include a mix of short and long ones
+    if len(selected) < 3 and len(documents) > len(selected):
+        # Sort by length and try to add a short document if possible
+        short_docs = sorted([doc for doc in documents if doc not in selected], 
+                           key=lambda x: x["token_count"])
+        
+        for doc in short_docs:
+            if current_tokens + doc["token_count"] <= max_tokens:
+                selected.append(doc)
+                current_tokens += doc["token_count"]
+                break
+    
+    # Final shuffle to mix up the order
+    random.shuffle(selected)
+    
+    return selected
+
+def select_documents_by_recency(documents: List[Dict], max_docs: int = 5) -> List[Dict]:
+    """
+    Alternative strategy: Select most recent documents (assuming higher page numbers are newer)
+    """
+    # Sort by page number (assuming higher = newer) and take top N
+    recent_docs = sorted(documents, key=lambda x: x.get("page", 0), reverse=True)[:max_docs]
+    return recent_docs
+
+
+def select_documents_by_length(documents: List[Dict], max_tokens: int) -> List[Dict]:
+    """
+    Alternative strategy: Select a mix of short, medium, and long documents
+    """
+    # Categorize by length
+    short_docs = [doc for doc in documents if doc["token_count"] < 500]
+    medium_docs = [doc for doc in documents if 500 <= doc["token_count"] < 1500]
+    long_docs = [doc for doc in documents if doc["token_count"] >= 1500]
+    
+    selected = []
+    current_tokens = 0
+    
+    # Try to get a mix: 1 long, 2 medium, 2 short (or whatever fits)
+    strategies = [
+        (long_docs, 1),
+        (medium_docs, 1), 
+        (short_docs, 1)
+    ]
+    
+    for doc_list, max_count in strategies:
+        random.shuffle(doc_list)
+        count = 0
+        for doc in doc_list:
+            if count >= max_count:
+                break
+            if current_tokens + doc["token_count"] <= max_tokens:
+                selected.append(doc)
+                current_tokens += doc["token_count"]
+                count += 1
+    
+    random.shuffle(selected)
+    return selected
+
+
+def add_more_documents(selected: List[Dict], all_documents: List[Dict], max_tokens: int) -> List[Dict]:
+    """
+    Add more documents if we have token space
+    """
+    current_tokens = sum(doc["token_count"] for doc in selected)
+    selected_ids = {doc["id"] for doc in selected}
+    
+    # Add medium-length documents that we haven't selected yet
+    remaining_docs = [
+        doc for doc in all_documents 
+        if doc["id"] not in selected_ids 
+        and doc["token_count"] <= 1000
+    ]
+    
+    remaining_docs.sort(key=lambda x: x["token_count"], reverse=True)
+    
+    for doc in remaining_docs:
+        if current_tokens + doc["token_count"] <= max_tokens:
+            selected.append(doc)
+            current_tokens += doc["token_count"]
+        else:
+            break
+    
+    return selected
+
+def truncate_document(doc: Dict, available_tokens: int) -> Dict:
+    """
+    Truncate a document to fit within available tokens
+    """
+    if available_tokens < 100:
+        return None
+    
+    content = doc["content"]
+    
+    try:
+        encoding = tiktoken.encoding_for_model("gpt-4")
+        tokens = encoding.encode(content)
+        
+        if len(tokens) > available_tokens:
+            truncated_tokens = tokens[:available_tokens - 50]
+            truncated_content = encoding.decode(truncated_tokens) + "... [document truncated]"
+            
+            return {
+                **doc,
+                "content": truncated_content,
+                "token_count": len(truncated_tokens) + 10
+            }
+    except Exception:
+        # Fallback: simple character-based truncation
+        if len(content) > available_tokens * 4:  # Rough estimate: 4 chars per token
+            truncated_content = content[:available_tokens * 4] + "... [document truncated]"
+            return {
+                **doc,
+                "content": truncated_content,
+                "token_count": available_tokens
+            }
+    
+    return None
 
 
 app = create_app()

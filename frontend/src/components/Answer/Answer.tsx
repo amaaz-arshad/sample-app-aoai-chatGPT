@@ -444,24 +444,7 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, sendFo
 
               const label = isPdf ? createCitationFilepath(citation, idx, true) : citation.title ?? ''
               // Conditionally set handlers based on organization
-              if (answer.organization === 'culture' && !isPdf) {
-                // For "culture" organization - use direct URL opening
-                const citationFilepath = createCitationFilepath(citation, idx)
-                return (
-                  <span
-                    title={label}
-                    tabIndex={0}
-                    role="link"
-                    key={idx}
-                    onClick={() => onCitationClicked(citation)}
-                    onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && onCitationClicked(citation)}
-                    className={styles.citationContainer}
-                    aria-label={label}>
-                    <div className={styles.citation}>{idx}</div>
-                    {label}
-                  </span>
-                )
-              } else {
+              if (answer.organization === 'publishone' || isPdf) {
                 // For other organizations - use existing PDF handling logic
                 const handleClick = () => {
                   if (isPdf) {
@@ -479,6 +462,23 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, sendFo
                     key={idx}
                     onClick={handleClick}
                     onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && handleClick()}
+                    className={styles.citationContainer}
+                    aria-label={label}>
+                    <div className={styles.citation}>{idx}</div>
+                    {label}
+                  </span>
+                )
+              } else {
+                // For "culture" organization - use direct URL opening
+                const citationFilepath = createCitationFilepath(citation, idx)
+                return (
+                  <span
+                    title={label}
+                    tabIndex={0}
+                    role="link"
+                    key={idx}
+                    onClick={() => onCitationClicked(citation)}
+                    onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && onCitationClicked(citation)}
                     className={styles.citationContainer}
                     aria-label={label}>
                     <div className={styles.citation}>{idx}</div>

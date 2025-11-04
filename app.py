@@ -1,3 +1,5 @@
+# app.py
+
 import copy
 import json
 import os
@@ -55,7 +57,22 @@ from concurrent.futures import ThreadPoolExecutor
 import threading
 from collections import deque
 from datetime import datetime
-# from werkzeug.middleware.proxy_fix import ProxyFix
+# Add these imports at the top of app.py
+from queue import Queue
+from threading import Thread, Event
+import queue
+from azure.identity.aio import ClientSecretCredential  # async version
+# Add to existing imports
+import tiktoken
+from typing import List, Dict
+import random
+
+# Add pricing constants (GPT-4o pricing as of 2024)
+GPT4O_INPUT_PRICE_PER_1K_TOKENS = 0.0025  # $2.50 per 1M tokens
+GPT4O_OUTPUT_PRICE_PER_1K_TOKENS = 0.01  # $10.00 per 1M tokens
+
+# Collection name for estimated costs
+ESTIMATED_COSTS_COLLECTION = "estimated_costs"
 
 load_dotenv() 
 
@@ -110,13 +127,74 @@ MAX_WORKERS = int(os.getenv("THREAD_POOL_MAX_WORKERS", "3"))
 # Initialize a thread pool for CPU-bound tasks
 executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
+# Replace the current upload_jobs and job_lock with a more comprehensive system
+upload_queue = Queue()
+queue_worker_running = Event()
 upload_jobs = {}
 job_lock = threading.Lock()
 JOB_EXPIRY_SECONDS = 86400  # 24 hours
 
-# Background job status tracking
+# Add these constants near the top with other settings
+MAX_QUEUE_WORKERS = 1  # Process one batch at a time
+JOB_QUEUE_MAX_SIZE = 100  # Maximum jobs in queue
+
+conversation_context_cache = {}
+
+# Queue worker function
+def queue_worker():
+    while queue_worker_running.is_set():
+        try:
+            # Get a job from the queue (wait up to 1 second)
+            job_data = upload_queue.get(timeout=1)
+            job_id, file_data, is_xml = job_data
+            
+            # Update job status to processing
+            update_job_status(job_id, "processing")
+            
+            # Process the files
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+                if is_xml:
+                    result = loop.run_until_complete(async_process_files(file_data, job_id, True))
+                else:
+                    result = loop.run_until_complete(async_process_files(file_data, job_id, False))
+                
+                loop.close()
+                
+                # Mark job as completed
+                update_job_status(job_id, "completed", result=result)
+                
+            except Exception as e:
+                logging.error(f"Job {job_id} failed: {str(e)}")
+                update_job_status(job_id, "failed", error=str(e))
+                
+            finally:
+                upload_queue.task_done()
+                
+        except queue.Empty:
+            # No jobs in queue, continue waiting
+            continue
+
+# Start the queue worker when the app starts
+def start_queue_workers():
+    queue_worker_running.set()
+    for i in range(MAX_QUEUE_WORKERS):
+        worker = Thread(target=queue_worker, daemon=True)
+        worker.start()
+
+# Stop the queue worker when the app shuts down
+def stop_queue_workers():
+    queue_worker_running.clear()
+
+# Update the update_job_status function to handle queue positions
 def update_job_status(job_id: str, status: str, result: dict = None, error: str = None):
     with job_lock:
+        # If the job is completing, remove queue position info
+        if status in ["processing", "completed", "failed"] and result and "position_in_queue" in result:
+            del result["position_in_queue"]
+            
         upload_jobs[job_id] = {
             "status": status,
             "result": result,
@@ -145,15 +223,9 @@ def run_async_in_thread(loop, coro):
     asyncio.set_event_loop(loop)
     loop.run_until_complete(coro)
     
+# Modify the create_app function to start queue workers
 def create_app():
     app = Quart(__name__)
-    # Apply ProxyFix so X-Forwarded-Proto (and others) are honored
-    # app.asgi_app = ProxyFix(
-    #     app.asgi_app,
-    #     x_proto=1,   # trust one proxy for scheme
-    #     x_host=1,    # trust one proxy for host
-    #     x_for=1      # trust one proxy for client IP (optional)
-    # )
     app.register_blueprint(bp)
     app.config["TEMPLATES_AUTO_RELOAD"] = True
     # Allow files up to 100000MB
@@ -164,10 +236,17 @@ def create_app():
         try:
             app.cosmos_conversation_client = await init_cosmosdb_client()
             cosmos_db_ready.set()
+            # Start queue workers when app starts
+            start_queue_workers()
         except Exception as e:
             logging.exception("Failed to initialize CosmosDB client")
             app.cosmos_conversation_client = None
             raise e
+    
+    # Add shutdown handler
+    @app.after_serving
+    async def shutdown():
+        stop_queue_workers()
     
     return app
 
@@ -329,11 +408,8 @@ async def prepare_model_args(request_body, request_headers):
     
     # Retrieve the system message from Cosmos DB for the authenticated user
     authenticated_user = get_authenticated_user_details(request_headers)
-    logging.info(f"Authenticated user details: {authenticated_user}")
-    logging.info(f"auth user id token: {authenticated_user['aad_id_token']}")
-    # print(f"authenticated_user: {authenticated_user}")
     user_id = authenticated_user["user_principal_id"]
-    system_message = app_settings.azure_openai.system_message  # Fallback value in case no custom message is found
+    system_message = app_settings.azure_openai.system_message
 
     try:
         # Get the CosmosDB container for system messages
@@ -345,20 +421,118 @@ async def prepare_model_args(request_body, request_headers):
         results = list(container.query_items(query=query, enable_cross_partition_query=True))
 
         if results:
-            # If a system message exists for the user, use that
             system_message = results[0]["system_message"]
     except Exception as e:
         logging.error(f"Error retrieving system message for user {user_id}: {e}")
 
-    # Add the system message to the messages array
+    # Add the system message to the messages array (unchanged)
     if not app_settings.datasource:
         messages = [
             {
                 "role": "system",
-                "content": system_message 
+                "content": system_message
             }
         ]
     
+    # Get organization context (FRESH fetch when starting new conversation, cached for existing conversations)
+    companyName = request_body.get("companyName", "").strip()
+    conversation_id = request_body.get("conversation_id")
+    
+    # Check if this is a new conversation (first user message)
+    user_messages = [msg for msg in request_messages if msg.get("role") == "user"]
+    is_new_conversation = len(user_messages) <= 1
+    
+    organization_context = None
+    
+    if conversation_id:
+        # Use conversation_id as cache key
+        cache_key = f"{conversation_id}_{companyName}"
+        
+        # For NEW conversations, always fetch fresh organization context
+        if is_new_conversation:
+            try:
+                if companyName:
+                    logging.info(f"NEW CONVERSATION - Fresh fetching documents for organization: {companyName}")
+                else:
+                    logging.info("NEW CONVERSATION - Fresh fetching documents from all organizations")
+                
+                organization_docs = await get_organization_documents(companyName, max_tokens=4000)
+                
+                if organization_docs:
+                    organization_context = format_documents_for_context(organization_docs, companyName)
+                    total_tokens = sum(doc["token_count"] for doc in organization_docs)
+                    
+                    if companyName:
+                        logging.info(f"Fresh fetched {len(organization_docs)} documents for organization {companyName}")
+                    else:
+                        logging.info(f"Fresh fetched {len(organization_docs)} documents from all organizations")
+                else:
+                    if companyName:
+                        organization_context = f"No documents found for organization '{companyName}'."
+                    else:
+                        organization_context = "No documents found in the system."
+                    logging.info(organization_context)
+                
+                # Cache the fresh result for this conversation
+                conversation_context_cache[cache_key] = organization_context
+                logging.info(f"Cached fresh organization context for new conversation: {conversation_id}")
+                
+            except Exception as e:
+                logging.error(f"Error fetching documents for new conversation: {e}")
+                organization_context = f"Error retrieving documents: {str(e)}"
+                # Cache the error too
+                conversation_context_cache[cache_key] = organization_context
+        else:
+            # EXISTING conversation - use cached organization context
+            if cache_key in conversation_context_cache:
+                organization_context = conversation_context_cache[cache_key]
+                logging.info(f"Using cached organization context for existing conversation {conversation_id}")
+            else:
+                # This shouldn't happen normally, but if cache is missing, fetch fresh
+                logging.warning(f"Missing cache for existing conversation {conversation_id}, fetching fresh")
+                try:
+                    organization_docs = await get_organization_documents(companyName, max_tokens=4000)
+                    if organization_docs:
+                        organization_context = format_documents_for_context(organization_docs, companyName)
+                    else:
+                        organization_context = f"No documents found for organization '{companyName}'." if companyName else "No documents found in the system."
+                    
+                    conversation_context_cache[cache_key] = organization_context
+                except Exception as e:
+                    logging.error(f"Error fetching documents: {e}")
+                    organization_context = f"Error retrieving documents: {str(e)}"
+    else:
+        # No conversation_id - this is a temporary new conversation
+        try:
+            if companyName:
+                logging.info(f"TEMPORARY NEW CONVERSATION - Fresh fetching documents for organization: {companyName}")
+            else:
+                logging.info("TEMPORARY NEW CONVERSATION - Fresh fetching documents from all organizations")
+            
+            organization_docs = await get_organization_documents(companyName, max_tokens=4000)
+            
+            if organization_docs:
+                organization_context = format_documents_for_context(organization_docs, companyName)
+            else:
+                if companyName:
+                    organization_context = f"No documents found for organization '{companyName}'."
+                else:
+                    organization_context = "No documents found in the system."
+            
+            logging.info(f"Fresh fetched organization context for temporary conversation")
+            
+        except Exception as e:
+            logging.error(f"Error fetching documents for temporary conversation: {e}")
+            organization_context = f"Error retrieving documents: {str(e)}"
+    
+    # Add organization context to messages array (FOR EVERY MESSAGE)
+    if organization_context:
+        messages.append({
+            "role": "system",
+            "content": organization_context
+        })
+
+    # Now add the conversation messages from the request
     for message in request_messages:
         if message:
             if message["role"] == "assistant" and "context" in message:
@@ -385,6 +559,9 @@ async def prepare_model_args(request_body, request_headers):
         application_name = app_settings.ui.title
         user_json = get_msdefender_user_json(authenticated_user_details, request_headers, conversation_id, application_name)
 
+    # print(f"System message used: {system_message}")
+    print(f"Final messages array: {messages}")
+
     model_args = {
         "messages": messages,
         "temperature": app_settings.azure_openai.temperature,
@@ -404,22 +581,21 @@ async def prepare_model_args(request_body, request_headers):
         if "parameters" not in data_source_config:
             data_source_config["parameters"] = {}
 
-        # Assign retrieved system message to role_information
+        # Use the original system message (unchanged) for role_information
         data_source_config["parameters"]["role_information"] = system_message
         
         # Get the companyName from the request body
-        companyName = request_body.get("companyName")
-        print("companyName:", companyName)
+        companyName = request_body.get("companyName", "").strip()
         
         # Apply the filter only if companyName has a value
         if companyName:
             # Convert companyName to lowercase
-            companyName = companyName.strip().lower().strip('.')
+            companyName = companyName.lower().strip('.')
             data_source_config["parameters"]["filter"] = f"organization eq '{companyName}'"
+        # If companyName is empty, no filter will be applied in the data source
 
-        # Ensure the base URL is HTTPS
-        public_base_url = request.url_root.rstrip("/").replace("http://", "https://")
-
+        # public_base_url = request.url_root.rstrip("/").replace("http://", "https://")
+        public_base_url = "https://7eb6a612b400.ngrok-free.app"
         data_source_config["parameters"]["embedding_dependency"] = {
             "type": "endpoint",
             "endpoint": f"{public_base_url}/api/embed",
@@ -428,7 +604,7 @@ async def prepare_model_args(request_body, request_headers):
                 "key": f"{authenticated_user['auth_token']}",
             }
         }
-
+        
         # Store the configuration into the extra_body
         model_args["extra_body"] = {
             "data_sources": [
@@ -472,7 +648,6 @@ async def prepare_model_args(request_body, request_headers):
 
     logging.debug(f"REQUEST BODY: {json.dumps(model_args_clean, indent=4)}")
 
-    # print(f"model_args: {model_args}")
     return model_args
 
 
@@ -550,10 +725,38 @@ async def complete_chat_request(request_body, request_headers):
 async def stream_chat_request(request_body, request_headers):
     response, apim_request_id = await send_chat_request(request_body, request_headers)
     history_metadata = request_body.get("history_metadata", {})
+    conversation_id = request_body.get("conversation_id")
+    
+    # Get authenticated user for cost tracking
+    authenticated_user = get_authenticated_user_details(request_headers)
+    user_question = ""
+    
+    # Extract user question from request messages
+    messages = request_body.get("messages", [])
+    for message in reversed(messages):
+        if message.get("role") == "user":
+            user_question = message.get("content", "")
+            break
+    
+    # For streaming, we need to collect the complete response
+    full_assistant_response = ""
     
     async def generate():
+        nonlocal full_assistant_response
         async for completionChunk in response:
+            # Extract content from the chunk
+            if completionChunk.choices and completionChunk.choices[0].delta.content:
+                content = completionChunk.choices[0].delta.content
+                full_assistant_response += content
+            
             yield format_stream_response(completionChunk, history_metadata, apim_request_id)
+        
+        # After streaming is complete, update costs in background
+        if user_question and full_assistant_response:
+            # Use asyncio.create_task to run in background without blocking
+            asyncio.create_task(
+                update_estimated_costs(authenticated_user, user_question, full_assistant_response, conversation_id)
+            )
 
     return generate()
 
@@ -1204,37 +1407,105 @@ async def process_single_file(filename: str, content: bytes, organization: str):
         gc.collect()
 
 
+# Modify the upload endpoints to use the queue
 @bp.route("/pipeline/upload", methods=["POST"])
 async def upload_files():
     form = await request.form
     files = (await request.files).getlist("files")
     organization = form.get("organization", "").strip().lower().strip('.')
-    
+    user_type = form.get("user_type", "").strip().lower()  # Get user type from frontend
+
     if not organization:
         return jsonify({"detail": "Missing 'organization' field."}), 400
-    
+
+    # Helper to run synchronous search in a thread
+    def collect_pdf_files_from_search(filter_expr: str):
+        """Run the synchronous azure search and return {filename: total_pages}."""
+        # Use a different approach - get unique files and their page counts
+        results = search_client.search(
+            search_text="*",
+            filter=filter_expr,
+            select="file, total_pages",
+            include_total_count=True
+        )
+        
+        pdf_files_local = {}
+        processed_files = set()
+        
+        for result in results:
+            filename = result.get("file")
+            
+            if not filename or filename in processed_files:
+                continue
+                
+            # For PDF files, we should have total_pages field
+            total_pages = result.get("total_pages")
+            if total_pages is not None:
+                try:
+                    pdf_files_local[filename] = int(total_pages)
+                    processed_files.add(filename)
+                except (ValueError, TypeError):
+                    pdf_files_local[filename] = 0
+                    processed_files.add(filename)
+                    
+        return pdf_files_local
+
+    # Check page limit for free users
+    if user_type == "free-user":
+        escaped = _escape_odata_string(organization)
+        filter_expr = f"organization eq '{escaped}'"
+        try:
+            pdf_files = await asyncio.to_thread(collect_pdf_files_from_search, filter_expr)
+            existing_pages = sum(pdf_files.values()) if pdf_files else 0
+        except Exception:
+            logging.exception("Unexpected error when checking existing pages")
+            existing_pages = 0
+
+        # Calculate pages in new PDF files
+        new_pages = 0
+        for uploaded_file in files:
+            if uploaded_file.filename.lower().endswith('.pdf'):
+                content = uploaded_file.read()
+                doc = fitz.open(stream=content, filetype="pdf")
+                new_pages += doc.page_count
+                doc.close()
+                uploaded_file.seek(0)  # Reset file pointer for processing
+
+        if existing_pages + new_pages > 20:  # Free user limit
+            return jsonify({
+                "detail": f"Free users are limited to 20 PDF pages total. "
+                          f"Current: {existing_pages}, New: {new_pages}"
+            }), 400
+
+    # Check if queue is full
+    if upload_queue.qsize() >= JOB_QUEUE_MAX_SIZE:
+        return jsonify({"detail": "Upload queue is full. Please try again later."}), 503
+
     job_id = str(uuid.uuid4())
-    update_job_status(job_id, "queued")
-    
+
     # Capture file content immediately before files are closed
     file_data = []
     for uploaded_file in files:
+        # Make sure file pointer is at start
+        try:
+            uploaded_file.seek(0)
+        except Exception:
+            pass
         file_data.append({
             "filename": uploaded_file.filename,
             "content": uploaded_file.read(),
             "organization": organization
         })
-    
-    # Start background processing
-    loop = asyncio.new_event_loop()
-    threading.Thread(
-        target=run_async_in_thread,
-        args=(loop, async_process_files(file_data, job_id, False)),
-        daemon=True
-    ).start()
-    
-    return jsonify({"job_id": job_id}), 202
 
+    # Add job to queue instead of processing immediately
+    upload_queue.put((job_id, file_data, False))
+    update_job_status(job_id, "queued", result={"position_in_queue": upload_queue.qsize()})
+
+    return jsonify({
+        "job_id": job_id,
+        "message": "Files added to processing queue",
+        "position_in_queue": upload_queue.qsize()
+    }), 202
 
 # Route to delete all files or files by companyClaim or organizationFilter
 @bp.route("/pipeline/delete_all", methods=["DELETE"])
@@ -1684,10 +1955,10 @@ def chunk_text(text: str, chunk_size: int = 5_000) -> List[str]:
 
 
 def process_xml_file(
-        xml_data: bytes,
-        organization: str,
-        file_name: str,
-        model  # sentence-transformers model
+    xml_data: bytes,
+    organization: str,
+    file_name: str,
+    model  # sentence-transformers model
 ):
     """
     Parse XML data from bytes and return a list of documents ready for
@@ -1696,7 +1967,26 @@ def process_xml_file(
     try:
         root = ET.fromstring(xml_data)
         base_name = os.path.splitext(file_name)[0]
+        docs_array = []
         
+        # --- NEW FORMAT DETECTION (by presence of <details> tag) ---
+        def is_new_format(elem):
+            """Check if element has a <details> child"""
+            return elem.find("details") is not None
+        
+        # Case 1: Root is container element (like <artists>) with multiple items
+        if any(is_new_format(child) for child in root):
+            for item in root:
+                if is_new_format(item):
+                    process_new_format_item(item, docs_array, organization, model)
+            return docs_array
+        
+        # Case 2: Root itself is an item with details
+        if is_new_format(root):
+            process_new_format_item(root, docs_array, organization, model)
+            return docs_array
+        
+        # --- EXISTING PROCESSING FOR OLD FORMAT ---
         # Handle different root types
         if root.tag == "folder":
             folder_elem = root
@@ -1714,54 +2004,97 @@ def process_xml_file(
                     if child.tag in ["document", "folder"]:
                         folder_elem.append(child)
         
+        # -- depth-first traversal of folders & docs -----------------------------
+        def traverse(folder_elem, parent_folder_id=None, parent_folder_name=None):
+            fid = folder_elem.attrib.get("id", parent_folder_id)
+            fname = folder_elem.findtext("naam", parent_folder_name or base_name).strip()
+
+            # process <document> children
+            for doc in folder_elem.findall("document"):
+                doc_id = doc.attrib.get("id", "")
+                try:
+                    page_num = int(doc_id)
+                except (TypeError, ValueError):
+                    page_num = 0
+                    
+                title = doc.findtext("naam", "").strip() or "(untitled)"
+                body_section = doc.find("document/section")
+                markdown = "\n\n".join(elem_to_markdown(body_section)) if body_section is not None else ""
+
+                for idx, chunk in enumerate(chunk_text(markdown), 1):
+                    header = f"{title} - Chunk {idx}"
+                    content = f"{header}\n\n{chunk}"
+                    content_vector = model.encode(content).tolist()
+
+                    docs_array.append({
+                        "id": str(uuid.uuid4()),
+                        "organization": organization,
+                        "title": f"{title} - Part {idx}",
+                        "page": page_num,
+                        "total_pages": int(fid) if fid and fid.isdigit() else 0,
+                        "file": doc_id,
+                        "content": content,
+                        "keywords": [],
+                        "contentVector": content_vector,
+                    })
+
+            # recurse into sub-folders
+            for sub in folder_elem.findall("folder"):
+                traverse(sub, fid, fname)
+
+        traverse(folder_elem, parent_folder_name=base_name)
+        return docs_array
+        
     except ET.ParseError as e:
         raise ValueError(f"Failed to parse XML data: {e}")
 
-    docs_array = []
-
-    # -- depth-first traversal of folders & docs -----------------------------
-    def traverse(folder_elem, parent_folder_id=None, parent_folder_name=None):
-        fid = folder_elem.attrib.get("id", parent_folder_id)
-        fname = folder_elem.findtext("naam", parent_folder_name or base_name).strip()
-
-        # process <document> children
-        for doc in folder_elem.findall("document"):
-            doc_id = doc.attrib.get("id", "")
-            try:
-                page_num = int(doc_id)
-            except (TypeError, ValueError):
-                page_num = 0
+def process_new_format_item(item, docs_array, organization, model):
+    """Process a single item in the new XML format"""
+    item_id = item.attrib.get("id", str(uuid.uuid4()))
+    details = item.find("details")
+    main_tag = item.tag
+    
+    if details is None:
+        return
+    
+    # Build markdown content
+    markdown = f"## {main_tag.capitalize()} {item_id}\n\n"
+    
+    for field in details:
+        field_name = field.tag.replace('_', ' ').title()
+        values = []
+        
+        # Handle different value structures
+        if field.text and field.text.strip():
+            values.append(field.text.strip())
+            
+        for child in field:
+            if child.text and child.text.strip():
+                values.append(child.text.strip())
+            elif child.tail and child.tail.strip():
+                values.append(child.tail.strip())
                 
-            title = doc.findtext("naam", "").strip() or "(untitled)"
-            body_section = doc.find("document/section")
-            print(f"\nProcessing document: {doc_id}")
-            markdown = "\n\n".join(elem_to_markdown(body_section)) if body_section is not None else ""
-
-            for idx, chunk in enumerate(chunk_text(markdown), 1):
-                header = f"{title} - Chunk {idx}"
-                content = f"{header}\n\n{chunk}"
-                print(f"Embedding chunk {idx} of document {doc_id}")
-                content_vector = model.encode(content).tolist()
-
-                docs_array.append({
-                    "id": str(uuid.uuid4()),
-                    "organization": organization,
-                    "title": f"{title} - Part {idx}",
-                    "page": page_num,
-                    "total_pages": int(fid) if fid and fid.isdigit() else 0,
-                    "file": doc_id,
-                    "content": content,
-                    "keywords": [],
-                    "contentVector": content_vector,
-                })
-
-        # recurse into sub-folders
-        for sub in folder_elem.findall("folder"):
-            traverse(sub, fid, fname)
-
-    traverse(folder_elem, parent_folder_name=base_name)
-    return docs_array
-
+        if values:
+            if len(values) == 1:
+                markdown += f"**{field_name}:** {values[0]}\n\n"
+            else:
+                markdown += f"**{field_name}:**\n"
+                markdown += "\n".join(f"- {v}" for v in values) + "\n\n"
+    
+    # Generate embeddings
+    content_vector = model.encode(markdown).tolist()
+    
+    docs_array.append({
+        "id": str(uuid.uuid4()),
+        "organization": organization,
+        "title": f"{main_tag.capitalize()} {item_id}",
+        "page": 0,
+        "total_pages": 0,
+        "file": item_id,
+        "content": markdown,
+        "keywords": [],
+        "contentVector": content_vector,
+    })
 
 async def process_single_xml_file(filename: str, content: bytes, organization: str):
     blob_path = f"{organization}/{filename}"
@@ -1806,6 +2139,7 @@ async def process_single_xml_file(filename: str, content: bytes, organization: s
         gc.collect()
         
 
+# Similarly modify the XML upload endpoint
 @bp.route("/pipeline/upload_xml", methods=["POST"])
 async def upload_xml_files():
     form = await request.form
@@ -1815,8 +2149,11 @@ async def upload_xml_files():
     if not organization:
         return jsonify({"detail": "Missing 'organization' field."}), 400
     
+    # Check if queue is full
+    if upload_queue.qsize() >= JOB_QUEUE_MAX_SIZE:
+        return jsonify({"detail": "Upload queue is full. Please try again later."}), 503
+    
     job_id = str(uuid.uuid4())
-    update_job_status(job_id, "queued")
     
     # Capture file content immediately before files are closed
     file_data = []
@@ -1827,15 +2164,15 @@ async def upload_xml_files():
             "organization": organization
         })
     
-    # Start background processing
-    loop = asyncio.new_event_loop()
-    threading.Thread(
-        target=run_async_in_thread,
-        args=(loop, async_process_files(file_data, job_id, True)),
-        daemon=True
-    ).start()
+    # Add job to queue instead of processing immediately
+    upload_queue.put((job_id, file_data, True))
+    update_job_status(job_id, "queued", result={"position_in_queue": upload_queue.qsize()})
     
-    return jsonify({"job_id": job_id}), 202
+    return jsonify({
+        "job_id": job_id,
+        "message": "Files added to processing queue",
+        "position_in_queue": upload_queue.qsize()
+    }), 202
 
 
 async def async_process_files(file_data, job_id, is_xml=False):
@@ -1871,6 +2208,7 @@ async def async_process_files(file_data, job_id, is_xml=False):
         update_job_status(job_id, "failed", error=str(e))
 
 
+# Enhance the job status function to include queue position
 @bp.route("/pipeline/job_status/<job_id>", methods=["GET"])
 async def get_job_status(job_id: str):
     with job_lock:
@@ -1879,12 +2217,601 @@ async def get_job_status(job_id: str):
     if not job:
         return jsonify({"error": "Job not found"}), 404
     
-    return jsonify({
+    # Add queue position for queued jobs
+    response_data = {
         "job_id": job_id,
         "status": job["status"],
         "result": job.get("result"),
         "error": job.get("error"),
         "timestamp": job["timestamp"]
-    })
+    }
+    
+    if job["status"] == "queued":
+        # Calculate position in queue
+        position = 1
+        for i in range(upload_queue.qsize()):
+            queued_job_id, _, _ = upload_queue.queue[i]
+            if queued_job_id == job_id:
+                response_data["position_in_queue"] = position
+                break
+            position += 1
+    
+    return jsonify(response_data)
+
+@bp.route("/pipeline/pdf_page_count", methods=["GET"])
+async def get_pdf_page_count():
+    company_name = request.args.get("company", "").strip().lower().strip('.')
+
+    if not company_name:
+        return jsonify({"total_pages": 0})
+
+    # Escape company name for OData filter
+    escaped = _escape_odata_string(company_name)
+    # Use endswith properly: endswith(file, '.pdf')
+    filter_expr = f"organization eq '{escaped}'"
+
+    try:
+        pdf_files = await asyncio.to_thread(collect_pdf_files_from_search, filter_expr)
+        total_pages = sum(pdf_files.values()) if pdf_files else 0
+    except Exception:
+        logging.exception("Azure Search HttpResponseError when fetching pdf page count")
+        # return a safe response rather than crash
+        return jsonify({"total_pages": 0, "error": "search_error"}), 200
+    except Exception:
+        logging.exception("Unexpected error when fetching pdf page count")
+        return jsonify({"total_pages": 0, "error": "internal_error"}), 200
+
+    return jsonify({"total_pages": total_pages})
+
+def _escape_odata_string(s: str) -> str:
+    # OData string literal single quotes must be doubled
+    return s.replace("'", "''")
+
+def collect_pdf_files_from_search(filter_expr: str):
+    """Run the synchronous azure search and return {filename: total_pages}."""
+    # Use a different approach - get unique files and their page counts
+    results = search_client.search(
+        search_text="*",
+        filter=filter_expr,
+        select="file, total_pages",
+        include_total_count=True
+    )
+    
+    pdf_files_local = {}
+    processed_files = set()
+    
+    for result in results:
+        filename = result.get("file")
+        
+        if not filename or filename in processed_files:
+            continue
+            
+        # For PDF files, we should have total_pages field
+        total_pages = result.get("total_pages")
+        if total_pages is not None:
+            try:
+                pdf_files_local[filename] = int(total_pages)
+                processed_files.add(filename)
+            except (ValueError, TypeError):
+                pdf_files_local[filename] = 0
+                processed_files.add(filename)
+                
+    return pdf_files_local
+
+@bp.route("/users/list", methods=["GET"])
+async def list_b2c_users_for_tenant():
+    """
+    Lists users from a specific B2C tenant using client credentials.
+    Requires these env vars:
+      B2C_TENANT_ID         -> the tenant id GUID or tenant domain (e.g. snapdeai.onmicrosoft.com)
+      B2C_CLIENT_ID         -> app registration (client) id in that tenant
+      B2C_CLIENT_SECRET     -> client secret for the app registration
+    The app must have Application permission User.Read.All (or similar) with admin consent.
+    """
+    try:
+        tenant = os.getenv("B2C_TENANT_ID")
+        client_id = os.getenv("B2C_CLIENT_ID")
+        client_secret = os.getenv("B2C_CLIENT_SECRET")
+
+        if not (tenant and client_id and client_secret):
+            return jsonify({"error": "Missing B2C_TENANT_ID, B2C_CLIENT_ID or B2C_CLIENT_SECRET env vars"}), 500
+
+        # Use the async client credential targeted at the B2C tenant
+        credential = ClientSecretCredential(
+            tenant_id=tenant,
+            client_id=client_id,
+            client_secret=client_secret
+        )
+
+        # Acquire token for Microsoft Graph (application scope)
+        token = await credential.get_token("https://graph.microsoft.com/.default")
+        access_token = token.token
+
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        }
+
+        users = []
+        url = (
+            "https://graph.microsoft.com/v1.0/users?"
+            "$select=id,displayName,userPrincipalName,identities,streetAddress,city"
+        )
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            while url:
+                resp = await client.get(url, headers=headers)
+                if resp.status_code != 200:
+                    text = await resp.aread()
+                    await credential.close()
+                    return jsonify({
+                        "error": f"Graph API error: {resp.status_code}",
+                        "details": text.decode(errors="ignore")
+                    }), resp.status_code
+
+                body = resp.json()
+                users.extend(body.get("value", []))
+
+                # paging
+                url = body.get("@odata.nextLink")
+
+        await credential.close()
+        return jsonify({"value": users}), 200
+
+    except Exception as e:
+        logging.exception("Exception in /users/list endpoint")
+        return jsonify({"error": str(e)}), 500
+
+def count_tokens(text: str, model: str = "gpt-4") -> int:
+    """Count tokens in text using tiktoken"""
+    try:
+        encoding = tiktoken.encoding_for_model(model)
+        return len(encoding.encode(text))
+    except Exception as e:
+        logging.error(f"Error counting tokens: {e}")
+        # Fallback: approximate token count (4 characters per token)
+        return len(text) // 4
+
+def calculate_cost(input_tokens: int, output_tokens: int) -> float:
+    """Calculate cost based on GPT-4o pricing"""
+    input_cost = (input_tokens / 1000) * GPT4O_INPUT_PRICE_PER_1K_TOKENS
+    output_cost = (output_tokens / 1000) * GPT4O_OUTPUT_PRICE_PER_1K_TOKENS
+    return round(input_cost + output_cost, 6)
+
+async def update_estimated_costs(authenticated_user: dict, user_question: str, assistant_answer: str, conversation_id: str = None):
+    """Update estimated costs for a user in CosmosDB"""
+    try:
+        user_id = authenticated_user["user_principal_id"]
+        user_name = authenticated_user["user_name"]
+        
+        # Count tokens
+        input_tokens = count_tokens(user_question)
+        output_tokens = count_tokens(assistant_answer)
+        cost = calculate_cost(input_tokens, output_tokens)
+        
+        # Get CosmosDB container
+        database = cosmos_client.get_database_client(app_settings.chat_history.database)
+        
+        # Create collection if it doesn't exist
+        existing_collections = [coll['id'] for coll in database.list_containers()]
+        if ESTIMATED_COSTS_COLLECTION not in existing_collections:
+            database.create_container(
+                id=ESTIMATED_COSTS_COLLECTION, 
+                partition_key=PartitionKey(path='/user_id')
+            )
+            logging.info(f"Created collection '{ESTIMATED_COSTS_COLLECTION}'.")
+        
+        container = database.get_container_client(ESTIMATED_COSTS_COLLECTION)
+        
+        # Check if user already has a cost record
+        query = f"SELECT * FROM c WHERE c.user_id = '{user_id}'"
+        results = list(container.query_items(query=query, enable_cross_partition_query=True))
+        
+        if results:
+            # Update existing record
+            user_cost_record = results[0]
+            user_cost_record["total_cost"] += cost
+            user_cost_record["total_input_tokens"] += input_tokens
+            user_cost_record["total_output_tokens"] += output_tokens
+            user_cost_record["last_updated"] = datetime.utcnow().isoformat()
+            user_cost_record["conversation_count"] = user_cost_record.get("conversation_count", 0) + 1
+            
+            # Store individual conversation details in history array
+            conversation_detail = {
+                "id": str(uuid.uuid4()),
+                "conversation_id": conversation_id,
+                "timestamp": datetime.utcnow().isoformat(),
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cost": cost,
+                "user_question_preview": user_question[:100] + "..." if len(user_question) > 100 else user_question
+            }
+            
+            if "conversation_history" not in user_cost_record:
+                user_cost_record["conversation_history"] = []
+            
+            user_cost_record["conversation_history"].append(conversation_detail)
+            # Keep only last 100 conversations to prevent document from growing too large
+            if len(user_cost_record["conversation_history"]) > 100:
+                user_cost_record["conversation_history"] = user_cost_record["conversation_history"][-100:]
+            
+            container.upsert_item(user_cost_record)
+        else:
+            # Create new record
+            new_record = {
+                "id": str(uuid.uuid4()),
+                "user_id": user_id,
+                "user_name": user_name,
+                "total_cost": cost,
+                "total_input_tokens": input_tokens,
+                "total_output_tokens": output_tokens,
+                "conversation_count": 1,
+                "first_created": datetime.utcnow().isoformat(),
+                "last_updated": datetime.utcnow().isoformat(),
+                "conversation_history": [
+                    {
+                        "id": str(uuid.uuid4()),
+                        "conversation_id": conversation_id,
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "cost": cost,
+                        "user_question_preview": user_question[:100] + "..." if len(user_question) > 100 else user_question
+                    }
+                ]
+            }
+            container.create_item(new_record)
+        
+        logging.info(f"Updated cost for user {user_name}: ${cost} (Input: {input_tokens}, Output: {output_tokens} tokens)")
+        
+    except Exception as e:
+        logging.error(f"Error updating estimated costs: {e}")
+
+@bp.route("/costs/all", methods=["GET"])
+async def get_all_costs():
+    """Get cost information for all users (admin endpoint)"""
+    try:
+        database = cosmos_client.get_database_client(app_settings.chat_history.database)
+        
+        # Check if collection exists
+        existing_collections = [coll['id'] for coll in database.list_containers()]
+        if ESTIMATED_COSTS_COLLECTION not in existing_collections:
+            return jsonify([])
+        
+        container = database.get_container_client(ESTIMATED_COSTS_COLLECTION)
+        
+        # Query all cost records
+        query = "SELECT * FROM c"
+        results = list(container.query_items(query=query, enable_cross_partition_query=True))
+        
+        # Return sorted by total_cost descending
+        sorted_results = sorted(results, key=lambda x: x.get("total_cost", 0), reverse=True)
+        
+        return jsonify(sorted_results)
+            
+    except Exception as e:
+        logging.error(f"Error retrieving all costs: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# Enhanced version that can use different strategies randomly
+async def get_organization_documents_enhanced(organization: str, max_tokens: int = 6000) -> List[Dict]:
+    """
+    Enhanced version that randomly selects different document selection strategies
+    """
+    try:
+        # Build filter expression - if organization is empty, don't filter
+        if organization and organization.strip():
+            escaped_organization = organization.replace("'", "''")
+            filter_expression = f"organization eq '{escaped_organization}'"
+        else:
+            filter_expression = None
+        
+        # Search with or without filter
+        if filter_expression:
+            all_results = search_client.search(
+                search_text="*",
+                filter=filter_expression,
+                select="id, content, title, file, page, total_pages",
+                top=1000
+            )
+        else:
+            all_results = search_client.search(
+                search_text="*", 
+                select="id, content, title, file, page, total_pages, organization",
+                top=1000
+            )
+        
+        documents = []
+        for result in all_results:
+            documents.append({
+                "id": result.get("id"),
+                "content": result.get("content", ""),
+                "title": result.get("title", ""),
+                "file": result.get("file", ""),
+                "page": result.get("page", 0),
+                "total_pages": result.get("total_pages", 0),
+                "organization": result.get("organization", ""),
+                "token_count": count_tokens(result.get("content", ""))
+            })
+        
+        if not documents:
+            return []
+        
+        # Randomly choose a selection strategy
+        strategies = [
+            select_random_diverse_documents,
+            lambda docs, tokens: select_documents_by_length(docs, tokens),
+            lambda docs, tokens: select_documents_by_recency(docs, min(10, len(docs)))
+        ]
+        
+        selected_strategy = random.choice(strategies)
+        selected_docs = selected_strategy(documents, max_tokens)
+        
+        logging.info(f"Used strategy {selected_strategy.__name__} to select {len(selected_docs)} documents")
+        return selected_docs
+        
+    except Exception as e:
+        logging.error(f"Error getting organization documents: {e}")
+        return []
+
+
+async def get_organization_documents(organization: str, max_tokens: int = 6000) -> List[Dict]:
+    """
+    Get representative documents for an organization with randomization
+    If organization is empty, get documents from all organizations
+    """
+    try:
+        # Build filter expression - if organization is empty, don't filter
+        if organization and organization.strip():
+            escaped_organization = organization.replace("'", "''")
+            filter_expression = f"organization eq '{escaped_organization}'"
+        else:
+            filter_expression = None
+            logging.info("No organization specified, searching across all documents")
+        
+        # Search with or without filter
+        if filter_expression:
+            all_results = search_client.search(
+                search_text="*",
+                filter=filter_expression,
+                select="id, content, title, file, page, total_pages",
+                top=1000  # Get more documents to allow for randomization
+            )
+        else:
+            all_results = search_client.search(
+                search_text="*",
+                select="id, content, title, file, page, total_pages, organization",
+                top=1000
+            )
+        
+        documents = []
+        for result in all_results:
+            documents.append({
+                "id": result.get("id"),
+                "content": result.get("content", ""),
+                "title": result.get("title", ""),
+                "file": result.get("file", ""),
+                "page": result.get("page", 0),
+                "total_pages": result.get("total_pages", 0),
+                "organization": result.get("organization", ""),
+                "token_count": count_tokens(result.get("content", ""))
+            })
+        
+        if not documents:
+            if organization and organization.strip():
+                logging.info(f"No documents found for organization: {organization}")
+            else:
+                logging.info("No documents found in the search index")
+            return []
+        
+        # Shuffle the documents to get random order
+        random.shuffle(documents)
+        
+        # Select diverse documents with randomization
+        selected_docs = select_random_diverse_documents(documents, max_tokens)
+        
+        logging.info(f"Selected {len(selected_docs)} random documents from {len(documents)} total")
+        return selected_docs
+        
+    except Exception as e:
+        logging.error(f"Error getting organization documents: {e}")
+        
+
+def format_documents_for_context(documents: List[Dict], organization: str = "") -> str:
+    """
+    Format selected documents into a coherent context string
+    """
+    if not documents:
+        if organization and organization.strip():
+            return f"No documents available for organization '{organization}'."
+        else:
+            return "No documents available in the system."
+    
+    # context_parts = ["DOCUMENT CONTEXT:\n"]
+    context_parts = ["Here is a part of my data/documents. Answer questions based on this content:\n\n\n"]
+    
+    # if organization and organization.strip():
+    #     context_parts.append(f"Found {len(documents)} relevant documents for organization '{organization}':\n")
+    # else:
+    #     context_parts.append(f"Found {len(documents)} relevant documents from all organizations:\n")
+    
+    for i, doc in enumerate(documents, 1):
+        context_parts.append(f"\n--- Document {i}: {doc.get('title', 'Untitled')} ---")
+        context_parts.append(f"Source: {doc.get('file', 'Unknown file')}")
+        context_parts.append(f"Content: {doc['content']}\n")
+    
+    return "\n".join(context_parts)
+
+
+def select_random_diverse_documents(documents: List[Dict], max_tokens: int) -> List[Dict]:
+    """
+    Select diverse documents using multiple randomization strategies
+    """
+    if not documents:
+        return []
+    
+    selected = []
+    current_tokens = 0
+    
+    # Strategy 1: Group by file and pick random documents from different files
+    files_dict = {}
+    for doc in documents:
+        file_name = doc.get("file", "")
+        if file_name not in files_dict:
+            files_dict[file_name] = []
+        files_dict[file_name].append(doc)
+    
+    # Shuffle the files and pick one random document from each
+    file_names = list(files_dict.keys())
+    random.shuffle(file_names)
+    
+    for file_name in file_names:
+        if not files_dict[file_name]:
+            continue
+            
+        # Pick a random document from this file
+        random_doc = random.choice(files_dict[file_name])
+        
+        if current_tokens + random_doc["token_count"] <= max_tokens:
+            selected.append(random_doc)
+            current_tokens += random_doc["token_count"]
+        else:
+            # Try to truncate if it's valuable but too long
+            truncated_doc = truncate_document(random_doc, max_tokens - current_tokens)
+            if truncated_doc:
+                selected.append(truncated_doc)
+                break
+    
+    # Strategy 2: If we still have space, add random documents regardless of file
+    remaining_docs = [doc for doc in documents if doc not in selected]
+    random.shuffle(remaining_docs)
+    
+    for doc in remaining_docs:
+        if current_tokens + doc["token_count"] <= max_tokens:
+            selected.append(doc)
+            current_tokens += doc["token_count"]
+        else:
+            break
+    
+    # Strategy 3: If we have very few documents, try to include a mix of short and long ones
+    if len(selected) < 3 and len(documents) > len(selected):
+        # Sort by length and try to add a short document if possible
+        short_docs = sorted([doc for doc in documents if doc not in selected], 
+                           key=lambda x: x["token_count"])
+        
+        for doc in short_docs:
+            if current_tokens + doc["token_count"] <= max_tokens:
+                selected.append(doc)
+                current_tokens += doc["token_count"]
+                break
+    
+    # Final shuffle to mix up the order
+    random.shuffle(selected)
+    
+    return selected
+
+def select_documents_by_recency(documents: List[Dict], max_docs: int = 5) -> List[Dict]:
+    """
+    Alternative strategy: Select most recent documents (assuming higher page numbers are newer)
+    """
+    # Sort by page number (assuming higher = newer) and take top N
+    recent_docs = sorted(documents, key=lambda x: x.get("page", 0), reverse=True)[:max_docs]
+    return recent_docs
+
+
+def select_documents_by_length(documents: List[Dict], max_tokens: int) -> List[Dict]:
+    """
+    Alternative strategy: Select a mix of short, medium, and long documents
+    """
+    # Categorize by length
+    short_docs = [doc for doc in documents if doc["token_count"] < 500]
+    medium_docs = [doc for doc in documents if 500 <= doc["token_count"] < 1500]
+    long_docs = [doc for doc in documents if doc["token_count"] >= 1500]
+    
+    selected = []
+    current_tokens = 0
+    
+    # Try to get a mix: 1 long, 2 medium, 2 short (or whatever fits)
+    strategies = [
+        (long_docs, 1),
+        (medium_docs, 1), 
+        (short_docs, 1)
+    ]
+    
+    for doc_list, max_count in strategies:
+        random.shuffle(doc_list)
+        count = 0
+        for doc in doc_list:
+            if count >= max_count:
+                break
+            if current_tokens + doc["token_count"] <= max_tokens:
+                selected.append(doc)
+                current_tokens += doc["token_count"]
+                count += 1
+    
+    random.shuffle(selected)
+    return selected
+
+
+def add_more_documents(selected: List[Dict], all_documents: List[Dict], max_tokens: int) -> List[Dict]:
+    """
+    Add more documents if we have token space
+    """
+    current_tokens = sum(doc["token_count"] for doc in selected)
+    selected_ids = {doc["id"] for doc in selected}
+    
+    # Add medium-length documents that we haven't selected yet
+    remaining_docs = [
+        doc for doc in all_documents 
+        if doc["id"] not in selected_ids 
+        and doc["token_count"] <= 1000
+    ]
+    
+    remaining_docs.sort(key=lambda x: x["token_count"], reverse=True)
+    
+    for doc in remaining_docs:
+        if current_tokens + doc["token_count"] <= max_tokens:
+            selected.append(doc)
+            current_tokens += doc["token_count"]
+        else:
+            break
+    
+    return selected
+
+def truncate_document(doc: Dict, available_tokens: int) -> Dict:
+    """
+    Truncate a document to fit within available tokens
+    """
+    if available_tokens < 100:
+        return None
+    
+    content = doc["content"]
+    
+    try:
+        encoding = tiktoken.encoding_for_model("gpt-4")
+        tokens = encoding.encode(content)
+        
+        if len(tokens) > available_tokens:
+            truncated_tokens = tokens[:available_tokens - 50]
+            truncated_content = encoding.decode(truncated_tokens) + "... [document truncated]"
+            
+            return {
+                **doc,
+                "content": truncated_content,
+                "token_count": len(truncated_tokens) + 10
+            }
+    except Exception:
+        # Fallback: simple character-based truncation
+        if len(content) > available_tokens * 4:  # Rough estimate: 4 chars per token
+            truncated_content = content[:available_tokens * 4] + "... [document truncated]"
+            return {
+                **doc,
+                "content": truncated_content,
+                "token_count": available_tokens
+            }
+    
+    return None
+
 
 app = create_app()

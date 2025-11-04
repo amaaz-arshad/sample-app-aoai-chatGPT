@@ -1,3 +1,4 @@
+// variables
 import { Language } from './types'
 import SnapLogo from '../assets/Snap.svg'
 import publishOneNav from '../assets/publishone-nav.svg'
@@ -6,18 +7,25 @@ import vjoonNav from '../assets/vjoon-nav.svg'
 import vjoonChat from '../assets/vjoon-chat.png'
 import agindoNav from '../assets/agindo-nav.png'
 import agindoChat from '../assets/agindo-chat.png'
+import lemonChat from '../assets/lemon-chat.png'
+import lemonNav from '../assets/lemon-nav.png'
 import pinkvoss from '../assets/pinkvoss.png'
 
+export const POLICY = 'B2C_1A_signup_signin'
+export const TENANT = 'snapdeai'
 export const FILTER_FIELD = 'city'
 export const FILTER_FIELD2 = 'streetAddress'
-
+export const simpleApps = ['agindo', 'pinkvoss', 'publishone']
 export const logos = {
   navbar: {
     default: SnapLogo,
     publishone: publishOneNav,
     vjoon: vjoonNav,
     'vjoon k4': vjoonNav,
+    'vjoon gmbh': vjoonNav,
     agindo: agindoNav,
+    lemon: lemonNav,
+    lemon2: lemonNav,
     pinkvoss: pinkvoss
   },
   chat: {
@@ -25,15 +33,18 @@ export const logos = {
     publishone: publishOneChat,
     vjoon: vjoonChat,
     'vjoon k4': vjoonChat,
+    'vjoon gmbh': vjoonChat,
     agindo: agindoChat,
+    lemon: lemonChat,
+    lemon2: lemonChat,
     pinkvoss: pinkvoss
   }
 }
 
 export const translations: Record<Language, Record<string, string>> = {
   en: {
-    'navbar.chatbotBySnap': 'Chatbot by SNAP',
     // Navbar
+    'navbar.chatbotBySnap': 'Chatbot by SNAP',
     'navbar.chatbot': 'Chatbot',
     'navbar.uploadFiles': 'Upload Files',
     'navbar.history': 'History',
@@ -84,6 +95,10 @@ export const translations: Record<Language, Record<string, string>> = {
     'fileUpload.noActiveJobs': 'No active background jobs',
     'fileUpload.progress': 'Progress',
     'fileUpload.filesProcessing': 'Files are being processed...',
+    'fileUpload.maxJobsReached':
+      'Maximum of 5 concurrent uploads reached. Please wait for current uploads to complete.',
+    'fileUpload.freeUserLimitReached': 'Free users can upload up to 3 files.',
+    'fileUpload.selectionExceedsLimit': 'Selected number of files exceeds the limit',
 
     // Chat component translations
     'chat.title': 'Ask me a question!',
@@ -100,7 +115,7 @@ export const translations: Record<Language, Record<string, string>> = {
       "An error occurred. Answers can't be saved at this time. If the problem persists, please contact the site administrator.",
     'chat.historyDisabled': 'Chat history is not enabled',
     'chat.contactAdmin': 'Please contact the site administrator.',
-    'chat.generatingAnswer': 'Generating answer...',
+    'chat.generatingAnswer': 'Chatbot is thinking...',
     'chat.stopGenerating': 'Stop generating',
     'chat.inputPlaceholder': 'Type a new question...',
     'chat.close': 'Close',
@@ -206,8 +221,8 @@ export const translations: Record<Language, Record<string, string>> = {
     hide: 'Hide'
   },
   de: {
-    'navbar.chatbotBySnap': 'Chatbot von SNAP',
     // Navbar
+    'navbar.chatbotBySnap': 'Chatbot von SNAP',
     'navbar.chatbot': 'Chatbot',
     'navbar.uploadFiles': 'Dateien hochladen',
     'navbar.history': 'Verlauf',
@@ -258,6 +273,10 @@ export const translations: Record<Language, Record<string, string>> = {
     'fileUpload.noActiveJobs': 'Keine aktiven Hintergrundjobs',
     'fileUpload.progress': 'Fortschritt',
     'fileUpload.filesProcessing': 'Dateien werden verarbeitet...',
+    'fileUpload.maxJobsReached':
+      'Maximale Anzahl von 5 gleichzeitigen Uploads erreicht. Bitte warten Sie, bis die aktuellen Uploads abgeschlossen sind.',
+    'fileUpload.freeUserLimitReached': 'Kostenlose Benutzer können bis zu 3 Dateien hochladen.',
+    'fileUpload.selectionExceedsLimit': 'Die ausgewählte Anzahl von Dateien überschreitet das Limit',
 
     // Chat component translations
     'chat.title': 'Stell mir eine Frage!',
@@ -276,7 +295,7 @@ export const translations: Record<Language, Record<string, string>> = {
       'Ein Fehler ist aufgetreten. Antworten können derzeit nicht gespeichert werden. Wenn das Problem weiterhin besteht, wenden Sie sich an den Administrator der Website.',
     'chat.historyDisabled': 'Chatverlauf ist nicht aktiviert',
     'chat.contactAdmin': 'Bitte wenden Sie sich an den Administrator der Website.',
-    'chat.generatingAnswer': 'Antwort wird generiert...',
+    'chat.generatingAnswer': 'Chatbot denkt nach...',
     'chat.stopGenerating': 'Beantwortung abbrechen',
     'chat.inputPlaceholder': 'Neue Frage eingeben...',
     'chat.close': 'Schließen',

@@ -594,8 +594,8 @@ async def prepare_model_args(request_body, request_headers):
             data_source_config["parameters"]["filter"] = f"organization eq '{companyName}'"
         # If companyName is empty, no filter will be applied in the data source
 
-        # public_base_url = request.url_root.rstrip("/").replace("http://", "https://")
-        public_base_url = "https://7eb6a612b400.ngrok-free.app"
+        public_base_url = request.url_root.rstrip("/").replace("http://", "https://")
+        # public_base_url = "https://7eb6a612b400.ngrok-free.app"
         data_source_config["parameters"]["embedding_dependency"] = {
             "type": "endpoint",
             "endpoint": f"{public_base_url}/api/embed",

@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Document</title>
+  </head>
+  <style>
+    #chat-toggle {
+      position: fixed;
+      bottom: 10px;
+      right: 10px;
+      width: 60px;
+      height: 60px;
+      background-color: #28242c;
+      color: white;
+      border-radius: 50%;
+      border: none;
+      font-size: 24px;
+      cursor: pointer;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 1002;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    }
+
+    #chat-popup {
+      position: fixed;
+      bottom: 80px;
+      right: 10px;
+      width: 400px;
+      height: min(600px, calc(100vh - 90px));
+      background-color: white;
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+      border-radius: 8px;
+      overflow: hidden;
+      display: none;
+      z-index: 1001;
+    }
+
+    #chat-popup iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
+
+    /* Mobile full-screen style */
+    @media (max-width: 768px) {
+      #chat-popup {
+        bottom: 0;
+        right: 0;
+        width: 100vw;
+        height: 100vh;
+        border-radius: 0;
+      }
+    }
+  </style>
+
+  <body>
+    <!-- Chat Widget -->
+    <div id="chat-toggle" aria-label="Open chat">💬</div>
+
+    <div id="chat-popup">
+      <iframe
+        src="http://127.0.0.1:50505/"
+        title="PublishOne Chatbot"
+        allow="clipboard-write"
+      ></iframe>
+    </div>
+    <script>
+      const toggleButton = document.getElementById("chat-toggle");
+      const popup = document.getElementById("chat-popup");
+
+      let isOpen = false;
+
+      toggleButton.addEventListener("click", () => {
+        isOpen = !isOpen;
+        if (isOpen) {
+          popup.style.display = "flex";
+          toggleButton.textContent = "×";
+        } else {
+          popup.style.display = "none";
+          toggleButton.textContent = "💬";
+        }
+      });
+    </script>
+  </body>
+</html>

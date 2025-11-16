@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import axios from 'axios'
 import { toast } from 'react-toastify'
 import Navbar from '../../components/Navbar/Navbar'
+import NavbarLemon from '../../components/Navbar/NavbarLemon'
 
 const SystemMessage: React.FC = () => {
   const [systemMessage, setSystemMessage] = useState<string | null>(null)
@@ -49,7 +50,7 @@ const SystemMessage: React.FC = () => {
 
   return (
     <div>
-      <Navbar />
+      <NavbarLemon />
 
       <div className="container my-5">
         <h2>System Message</h2>

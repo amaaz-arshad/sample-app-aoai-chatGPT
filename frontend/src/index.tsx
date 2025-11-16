@@ -19,10 +19,25 @@ import SystemMessage from './pages/systemMessage/SystemMessage'
 import { AppUserProvider } from './state/AppUserProvider'
 import { LanguageProvider } from './state/LanguageContext'
 import { BackgroundJobsProvider } from './state/BackgroundJobsContext'
+import ChatLemon from './pages/chat/ChatLemon'
+import LayoutLemon from './pages/layout/LayoutLemon'
 
 initializeIcons('https://res.cdn.office.net/files/fabric-cdn-prod_20240129.001/assets/icons/')
 
 export default function App() {
+  const getOrganizationFromHost = () => {
+    const hostParts = window.location.hostname.split('.')
+    console.log('Host parts in navbar:', hostParts)
+    return hostParts.length >= 4 ? hostParts[0] : 'default'
+  }
+
+  const organization = getOrganizationFromHost()
+  const isLemon = organization === 'lemon' || organization === 'lemon2'
+
+  // choose layout + chat once
+  const RootLayout = isLemon ? LayoutLemon : Layout
+  const ChatPage = isLemon ? ChatLemon : Chat
+
   return (
     <AppStateProvider>
       <LanguageProvider>
@@ -30,13 +45,18 @@ export default function App() {
           <BackgroundJobsProvider>
             <HashRouter>
               <Routes>
-                <Route path="/" element={<Layout />}>
-                  <Route index element={<Chat />} />
+                <Route path="/" element={<RootLayout />}>
+                  <Route index element={<ChatPage />} />
                   <Route path="*" element={<NoPage />} />
                 </Route>
-                {/* <Route path="/upload-files" element={<FileUpload />} />
-                <Route path="/history" element={<History />} />
-                <Route path="/system-message" element={<SystemMessage />} /> */}
+                <Route path="/system-message" element={<SystemMessage />} />
+                {/* {organization !== 'publishone' && (
+                  <>
+                    <Route path="/upload-files" element={<FileUpload />} />
+                    <Route path="/history" element={<History />} />
+                    <Route path="/system-message" element={<SystemMessage />} />
+                  </>
+                )} */}
               </Routes>
             </HashRouter>
           </BackgroundJobsProvider>

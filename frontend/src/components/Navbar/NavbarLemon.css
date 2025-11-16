@@ -1,0 +1,59 @@
+/* Navbar background and text color */
+.navbar-snap {
+  background-color: #fec701 !important;
+  color: #000000;
+  min-height: 56px;
+}
+
+/* Title centered */
+.navbar-snap .navbar-title {
+  color: #000000;
+  font-weight: 600;
+  font-size: 1.25rem;
+  pointer-events: none;
+}
+
+/* Circular logo */
+.logo-circle {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.logo-circle img {
+  max-width: 70%;
+  height: auto;
+  display: block;
+}
+
+/* Menu button */
+.menu-btn {
+  border: none;
+  background: none;
+  color: #000000;
+  line-height: 1;
+}
+.menu-btn svg {
+  width: 24px;
+  height: 24px;
+}
+
+/* Light dropdown styling */
+.dropdown-light {
+  background-color: #ffffff !important;
+  color: #000000 !important;
+  border: 1px solid #ddd;
+}
+.dropdown-light .dropdown-item {
+  color: #000000;
+}
+.dropdown-light .dropdown-item:hover {
+  background-color: #f2f2f2;
+}
+.dropdown-light .dropdown-divider {
+  border-color: #e0e0e0;
+}

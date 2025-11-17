@@ -11,6 +11,7 @@ import {
   History24Regular,
   Globe24Regular
 } from '@fluentui/react-icons'
+import lemonChatbotLogo from '../../assets/lemon-chatbot.png'
 
 type Props = {
   chatbotName?: string
@@ -38,7 +39,7 @@ export default function NavbarLemon({ chatbotName, onStartNewChat, onEndChat, on
         {/* Left: circular logo */}
         <a className="navbar-brand d-flex align-items-center" href="#" aria-label="Home">
           <div className="logo-circle">
-            <img src={logoSrc} alt="Logo" />
+            <img src={lemonChatbotLogo} alt="Logo" />
           </div>
         </a>
 

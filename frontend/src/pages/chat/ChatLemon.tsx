@@ -39,7 +39,7 @@ import { QuestionInput } from '../../components/QuestionInput'
 import { ChatHistoryPanel } from '../../components/ChatHistory/ChatHistoryPanel'
 import { AppStateContext } from '../../state/AppProvider'
 import { useBoolean } from '@fluentui/react-hooks'
-import { FILTER_FIELD, logos } from '../../constants/variables'
+import { FILTER_FIELD, LEMON_INTRO_TEXT, logos } from '../../constants/variables'
 import { toast } from 'react-toastify'
 import { useLanguage } from '../../state/LanguageContext'
 import { useAppUser } from '../../state/AppUserProvider'
@@ -56,7 +56,7 @@ export default function ChatLemon() {
   const INITIAL_ASSISTANT: ChatMessage = {
     id: 'init-msg',
     role: 'assistant',
-    content: 'Hi! Was möchtest du wissen?',
+    content: LEMON_INTRO_TEXT,
     date: new Date().toISOString()
   }
   const appStateContext = useContext(AppStateContext)
@@ -79,7 +79,7 @@ export default function ChatLemon() {
   const [errorMsg, setErrorMsg] = useState<ErrorMessage | null>()
   const [logo, setLogo] = useState('')
   const [answerId, setAnswerId] = useState<string>('')
-  // const [userDetails, setUserDetails] = useState<UserInfo[]>([])
+  const [userDetails, setUserDetails] = useState<UserInfo[]>([])
   const [organization, setOrganization] = useState(() => {
     const hostParts = window.location.hostname.split('.')
     console.log('Host parts in chat:', hostParts)

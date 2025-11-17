@@ -18,7 +18,7 @@ import styles from './AnswerLemon.module.css'
 import { useLanguage } from '../../state/LanguageContext'
 import { Spinner } from 'react-bootstrap'
 import { LEMON_HEADING, logos } from '../../constants/variables'
-
+import lemonChatbotLogo from '../../assets/lemon-chatbot.png'
 interface Props {
   answer: AskResponse
   onCitationClicked: (citedDocument: Citation) => void
@@ -361,7 +361,7 @@ export const AnswerLemon = ({ answer, onCitationClicked, onExectResultClicked, s
                 parsedAnswer && (
                   <>
                     <div className={styles.assistantHeader}>
-                      <img src={logoSrc} alt="Lemon AID logo" className={styles.assistantAvatar} />
+                      <img src={lemonChatbotLogo} alt="Lemon AID logo" className={styles.assistantAvatar} />
                       <div className={styles.assistantName}>{LEMON_HEADING}</div>
                     </div>
                     <ReactMarkdown

@@ -42,6 +42,8 @@ export const logos = {
   }
 }
 
+export const LEMON_INTRO_TEXT = `Willkommen! \nSchön, dass Du da bist. Möchtest Du Dein Wissen zu einem Thema selbst überprüfen oder hast Du Fragen, die Du klären möchtest?`
+
 export const translations: Record<Language, Record<string, string>> = {
   en: {
     // Navbar

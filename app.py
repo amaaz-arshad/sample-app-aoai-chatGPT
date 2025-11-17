@@ -1963,8 +1963,12 @@ def process_xml_file(
     """
     try:
         root = ET.fromstring(xml_data)
-        base_name = os.path.splitext(file_name)[0]
+        base_name = os.path.splitext(file_name)[0]  # Define base_name here
         docs_array = []
+        
+        # --- NEW: Handle hyrox_documents structure ---
+        if root.tag == "hyrox_documents":
+            return process_hyrox_documents(root, organization, file_name, model)
         
         # --- NEW FORMAT DETECTION (by presence of <details> tag) ---
         def is_new_format(elem):
@@ -2044,6 +2048,102 @@ def process_xml_file(
         
     except ET.ParseError as e:
         raise ValueError(f"Failed to parse XML data: {e}")
+
+def process_hyrox_documents(root, organization: str, file_name: str, model):
+    """
+    Process the hyrox_documents XML structure where each <document> contains
+    fields like id, title, category, author, date, version, lms_id, url, tags, summary, content.
+    """
+    docs_array = []
+    
+    for doc_elem in root.findall("document"):
+        try:
+            # Extract all fields with safe handling for missing elements
+            doc_id = get_text_safe(doc_elem, "id", "unknown_id")
+            title = get_text_safe(doc_elem, "title", "Untitled")
+            category = get_text_safe(doc_elem, "category", "")
+            author = get_text_safe(doc_elem, "author", "")
+            date = get_text_safe(doc_elem, "date", "")
+            version = get_text_safe(doc_elem, "version", "")
+            lms_id = get_text_safe(doc_elem, "lms_id", "")
+            url = get_text_safe(doc_elem, "url", "")
+            tags = get_text_safe(doc_elem, "tags", "")
+            summary = get_text_safe(doc_elem, "summary", "")
+            content = get_text_safe(doc_elem, "content", "")
+            
+            # Process tags into keywords array
+            keywords = []
+            if tags:
+                # Split by comma and clean up each tag
+                keywords = [tag.strip() for tag in tags.split(",") if tag.strip()]
+            
+            # Create combined markdown content
+            markdown_parts = []
+            
+            # Add title as header
+            markdown_parts.append(f"# {title}\n")
+            
+            # Add metadata as key-value pairs
+            if doc_id and doc_id != "unknown_id":
+                markdown_parts.append(f"**ID:** {doc_id}  ")
+            if category:
+                markdown_parts.append(f"**Category:** {category}  ")
+            if author:
+                markdown_parts.append(f"**Author:** {author}  ")
+            if date:
+                markdown_parts.append(f"**Date:** {date}  ")
+            if version:
+                markdown_parts.append(f"**Version:** {version}  ")
+            if lms_id:
+                markdown_parts.append(f"**LMS ID:** {lms_id}  ")
+            if url:
+                markdown_parts.append(f"**URL:** [Link]({url})  ")
+            if keywords:
+                markdown_parts.append(f"**Tags:** {', '.join(keywords)}  ")
+            
+            markdown_parts.append("\n")  # Add spacing
+            
+            # Add summary if available
+            if summary:
+                markdown_parts.append(f"### Summary\n{summary}\n")
+            
+            # Add main content
+            if content:
+                markdown_parts.append(f"### Content\n{content}\n")
+            
+            # Combine all parts
+            combined_markdown = "\n".join(markdown_parts)
+            
+            # Generate embedding for the combined content
+            content_vector = model.encode(combined_markdown).tolist()
+            
+            # Create the document for search index
+            doc = {
+                "id": str(uuid.uuid4()),
+                "organization": organization,
+                "title": title,
+                "page": None,  # As requested
+                "total_pages": None,  # As requested
+                "file": file_name,  # Use the XML filename
+                "content": combined_markdown,
+                "contentVector": content_vector,
+                "keywords": keywords  # Split tags as requested
+            }
+            
+            docs_array.append(doc)
+            
+        except Exception as e:
+            logging.error(f"Error processing document element in hyrox_documents: {e}")
+            continue
+    
+    logging.info(f"Processed {len(docs_array)} documents from hyrox_documents XML")
+    return docs_array
+
+def get_text_safe(element, tag_name, default=""):
+    """Safely get text from an XML element, return default if not found"""
+    elem = element.find(tag_name)
+    return elem.text.strip() if elem is not None and elem.text else default
+
 
 def process_new_format_item(item, docs_array, organization, model):
     """Process a single item in the new XML format"""

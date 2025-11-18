@@ -39,7 +39,7 @@ import { QuestionInput } from '../../components/QuestionInput'
 import { ChatHistoryPanel } from '../../components/ChatHistory/ChatHistoryPanel'
 import { AppStateContext } from '../../state/AppProvider'
 import { useBoolean } from '@fluentui/react-hooks'
-import { FILTER_FIELD, logos } from '../../constants/variables'
+import { FILTER_FIELD, LEMON_INTRO_TEXT, logos } from '../../constants/variables'
 import { toast } from 'react-toastify'
 import { useLanguage } from '../../state/LanguageContext'
 import { useAppUser } from '../../state/AppUserProvider'
@@ -53,7 +53,21 @@ const enum messageStatus {
 const hostname = window.location.hostname.split('.')
 const isOrgDomain = hostname[1] == 'chatbot'
 
+// Helper: create initial assistant message for lemon orgs
+const createInitialAssistant = (organization: string): ChatMessage | null =>
+  organization === 'lemon' || organization === 'lemon2'
+    ? {
+        id: 'init-msg',
+        role: 'assistant',
+        content: LEMON_INTRO_TEXT,
+        date: new Date().toISOString()
+      }
+    : null
+
 const Chat = () => {
+  const initialOrg = isOrgDomain ? hostname[0].toLowerCase() : ''
+  const [organization, setOrganization] = useState(initialOrg)
+
   const appStateContext = useContext(AppStateContext)
   const ui = appStateContext?.state.frontendSettings?.ui
   const AUTH_ENABLED = appStateContext?.state.frontendSettings?.auth_enabled
@@ -66,7 +80,6 @@ const Chat = () => {
   const [isIntentsPanelOpen, setIsIntentsPanelOpen] = useState<boolean>(false)
   const abortFuncs = useRef([] as AbortController[])
   const [showAuthMessage, setShowAuthMessage] = useState<boolean | undefined>()
-  const [messages, setMessages] = useState<ChatMessage[]>([])
   const [execResults, setExecResults] = useState<ExecResults[]>([])
   const [processMessages, setProcessMessages] = useState<messageStatus>(messageStatus.NotRunning)
   const [clearingChat, setClearingChat] = useState<boolean>(false)
@@ -75,9 +88,14 @@ const Chat = () => {
   const [logo, setLogo] = useState('')
   const [answerId, setAnswerId] = useState<string>('')
   const [userDetails, setUserDetails] = useState<UserInfo[]>([])
-  const [organization, setOrganization] = useState(isOrgDomain ? hostname[0].toLowerCase() : '')
   const { t } = useLanguage()
   const { userInfo } = useAppUser()
+
+  // Initialize messages with intro if applicable
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    const init = createInitialAssistant(initialOrg)
+    return init ? [init] : []
+  })
 
   const errorDialogContentProps = {
     type: DialogType.close,
@@ -96,12 +114,17 @@ const Chat = () => {
   const [ASSISTANT, TOOL, ERROR] = ['assistant', 'tool', 'error']
   const NO_CONTENT_ERROR = 'No content in messages object.'
 
+  // Resolve organization from userInfo if not org domain
   useEffect(() => {
     if (userInfo && userInfo.length > 0) {
       if (!isOrgDomain) {
         const organizationClaim = userInfo[0].user_claims.find(claim => claim.typ === FILTER_FIELD)
-        setOrganization(organizationClaim ? organizationClaim.val.trim().toLowerCase() : '')
+        const newOrg = organizationClaim ? organizationClaim.val.trim().toLowerCase() : ''
+        if (newOrg && newOrg !== organization) {
+          setOrganization(newOrg)
+        }
       }
+      
     }
     setIsAuthLoading(false)
   }, [userInfo])
@@ -214,12 +237,12 @@ const Chat = () => {
 
     if (!conversationId) {
       isEmpty(toolMessage)
-        ? setMessages([...messages, userMessage, assistantMessage])
-        : setMessages([...messages, userMessage, toolMessage, assistantMessage])
+        ? setMessages(prev => [...prev, userMessage, assistantMessage])
+        : setMessages(prev => [...prev, userMessage, toolMessage, assistantMessage])
     } else {
       isEmpty(toolMessage)
-        ? setMessages([...messages, assistantMessage])
-        : setMessages([...messages, toolMessage, assistantMessage])
+        ? setMessages(prev => [...prev, assistantMessage])
+        : setMessages(prev => [...prev, toolMessage, assistantMessage])
     }
   }
 
@@ -257,10 +280,11 @@ const Chat = () => {
 
     let conversation: Conversation | null | undefined
     if (!conversationId) {
+      const prior = messages.filter(m => m.role !== ERROR)
       conversation = {
         id: conversationId ?? uuid(),
         title: question as string,
-        messages: [userMessage],
+        messages: [...prior, userMessage],
         date: new Date().toISOString()
       }
     } else {
@@ -330,7 +354,9 @@ const Chat = () => {
         }
         conversation.messages.push(toolMessage, assistantMessage)
         appStateContext?.dispatch({ type: 'UPDATE_CURRENT_CHAT', payload: conversation })
-        setMessages([...messages, toolMessage, assistantMessage])
+        // messages already updated via processResultMessage; no need to append again here,
+        // but keeping your pattern:
+        setMessages(prev => [...prev, toolMessage, assistantMessage])
       }
     } catch (e) {
       if (!abortController.signal.aborted) {
@@ -351,9 +377,9 @@ const Chat = () => {
         }
         conversation.messages.push(errorChatMsg)
         appStateContext?.dispatch({ type: 'UPDATE_CURRENT_CHAT', payload: conversation })
-        setMessages([...messages, errorChatMsg])
+        setMessages(prev => [...prev, errorChatMsg])
       } else {
-        setMessages([...messages, userMessage])
+        setMessages(prev => [...prev, userMessage])
       }
     } finally {
       setIsLoading(false)
@@ -430,11 +456,9 @@ const Chat = () => {
       }
     } else {
       console.log('organization in request 2:', organization)
-      request = {
-        messages: [userMessage].filter(answer => answer.role !== ERROR),
-        companyName: organization
-      }
-      setMessages(request.messages)
+      const prior = messages.filter(m => m.role !== ERROR)
+      request = { messages: [...prior, userMessage], companyName: organization }
+      setMessages([...prior, userMessage])
     }
     let result = {} as ChatResponse
     var errorResponseMessage = t('chat.defaultError')
@@ -464,7 +488,7 @@ const Chat = () => {
           }
           resultConversation.messages.push(errorChatMsg)
         } else {
-          setMessages([...messages, userMessage, errorChatMsg])
+          setMessages(prev => [...prev, userMessage, errorChatMsg])
           setIsLoading(false)
           setShowLoadingMessage(false)
           abortFuncs.current = abortFuncs.current.filter(a => a !== abortController)
@@ -535,10 +559,11 @@ const Chat = () => {
             ? resultConversation.messages.push(assistantMessage)
             : resultConversation.messages.push(toolMessage, assistantMessage)
         } else {
+          const prior = messages.filter(m => m.role !== ERROR)
           resultConversation = {
             id: result.history_metadata.conversation_id,
             title: result.history_metadata.title,
-            messages: [userMessage],
+            messages: [...prior, userMessage],
             date: result.history_metadata.date
           }
           isEmpty(toolMessage)
@@ -553,8 +578,8 @@ const Chat = () => {
         }
         appStateContext?.dispatch({ type: 'UPDATE_CURRENT_CHAT', payload: resultConversation })
         isEmpty(toolMessage)
-          ? setMessages([...messages, assistantMessage])
-          : setMessages([...messages, toolMessage, assistantMessage])
+          ? setMessages(prev => [...prev, assistantMessage])
+          : setMessages(prev => [...prev, toolMessage, assistantMessage])
       }
     } catch (e) {
       if (!abortController.signal.aborted) {
@@ -593,7 +618,7 @@ const Chat = () => {
               content: errorMessage,
               date: new Date().toISOString()
             }
-            setMessages([...messages, userMessage, errorChatMsg])
+            setMessages(prev => [...prev, userMessage, errorChatMsg])
             setIsLoading(false)
             setShowLoadingMessage(false)
             abortFuncs.current = abortFuncs.current.filter(a => a !== abortController)
@@ -614,9 +639,9 @@ const Chat = () => {
           return
         }
         appStateContext?.dispatch({ type: 'UPDATE_CURRENT_CHAT', payload: resultConversation })
-        setMessages([...messages, errorChatMsg])
+        setMessages(prev => [...prev, errorChatMsg])
       } else {
-        setMessages([...messages, userMessage])
+        setMessages(prev => [...prev, userMessage])
       }
     } finally {
       setIsLoading(false)
@@ -646,7 +671,8 @@ const Chat = () => {
         setActiveCitation(undefined)
         setIsCitationPanelOpen(false)
         setIsIntentsPanelOpen(false)
-        setMessages([])
+        const init = createInitialAssistant(organization)
+        setMessages(init ? [init] : [])
       }
     }
     setClearingChat(false)
@@ -654,23 +680,18 @@ const Chat = () => {
 
   const tryGetRaiPrettyError = (errorMessage: string) => {
     try {
-      // Using a regex to extract the JSON part that contains "innererror"
       const match = errorMessage.match(/'innererror': ({.*})\}\}/)
       if (match) {
-        // Replacing single quotes with double quotes and converting Python-like booleans to JSON booleans
         const fixedJson = match[1]
           .replace(/'/g, '"')
           .replace(/\bTrue\b/g, 'true')
           .replace(/\bFalse\b/g, 'false')
         const innerErrorJson = JSON.parse(fixedJson)
         let reason = ''
-        // Check if jailbreak content filter is the reason of the error
-        const jailbreak = innerErrorJson.content_filter_result.jailbreak
-        if (jailbreak.filtered === true) {
+        const jailbreak = innerErrorJson.content_filter_result?.jailbreak
+        if (jailbreak?.filtered === true) {
           reason = 'Jailbreak'
         }
-
-        // Returning the prettified error message
         if (reason !== '') {
           return t('chat.contentFilterError', { reason })
         }
@@ -703,7 +724,8 @@ const Chat = () => {
 
   const newChat = () => {
     setProcessMessages(messageStatus.Processing)
-    setMessages([])
+    const init = createInitialAssistant(organization)
+    setMessages(init ? [init] : [])
     setIsCitationPanelOpen(false)
     setIsIntentsPanelOpen(false)
     setActiveCitation(undefined)
@@ -717,13 +739,15 @@ const Chat = () => {
     setIsLoading(false)
   }
 
+  // Sync messages with currentChat or intro when chat changes or org changes
   useEffect(() => {
     if (appStateContext?.state.currentChat) {
       setMessages(appStateContext.state.currentChat.messages)
     } else {
-      setMessages([])
+      const init = createInitialAssistant(organization)
+      setMessages(init ? [init] : [])
     }
-  }, [appStateContext?.state.currentChat])
+  }, [appStateContext?.state.currentChat, organization])
 
   useLayoutEffect(() => {
     const saveToDB = async (messages: ChatMessage[], id: string) => {

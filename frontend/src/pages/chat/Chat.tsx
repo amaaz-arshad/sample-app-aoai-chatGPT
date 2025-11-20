@@ -39,7 +39,7 @@ import { QuestionInput } from '../../components/QuestionInput'
 import { ChatHistoryPanel } from '../../components/ChatHistory/ChatHistoryPanel'
 import { AppStateContext } from '../../state/AppProvider'
 import { useBoolean } from '@fluentui/react-hooks'
-import { FILTER_FIELD, logos } from '../../constants/variables'
+import { FILTER_FIELD, LEMON_INTRO_TEXT, logos, ORG_DEFAULT_VALUE } from '../../constants/variables'
 import { toast } from 'react-toastify'
 import { useLanguage } from '../../state/LanguageContext'
 import { useAppUser } from '../../state/AppUserProvider'
@@ -51,6 +51,13 @@ const enum messageStatus {
 }
 
 const Chat = () => {
+  const { t } = useLanguage()
+  const INITIAL_ASSISTANT: ChatMessage = {
+    id: 'init-msg',
+    role: 'assistant',
+    content: LEMON_INTRO_TEXT,
+    date: new Date().toISOString()
+  }
   const appStateContext = useContext(AppStateContext)
   const ui = appStateContext?.state.frontendSettings?.ui
   const AUTH_ENABLED = appStateContext?.state.frontendSettings?.auth_enabled
@@ -63,7 +70,7 @@ const Chat = () => {
   const [isIntentsPanelOpen, setIsIntentsPanelOpen] = useState<boolean>(false)
   const abortFuncs = useRef([] as AbortController[])
   // const [showAuthMessage, setShowAuthMessage] = useState<boolean | undefined>()
-  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [messages, setMessages] = useState<ChatMessage[]>([INITIAL_ASSISTANT])
   const [execResults, setExecResults] = useState<ExecResults[]>([])
   const [processMessages, setProcessMessages] = useState<messageStatus>(messageStatus.NotRunning)
   const [clearingChat, setClearingChat] = useState<boolean>(false)
@@ -74,11 +81,9 @@ const Chat = () => {
   // const [userDetails, setUserDetails] = useState<UserInfo[]>([])
   const [organization, setOrganization] = useState(() => {
     const hostParts = window.location.hostname.split('.')
-    console.log('Host parts in chat:', hostParts)
-    return hostParts.length >= 4 ? hostParts[0] : 'default'
+    return hostParts[1] === 'chatbot' ? hostParts[0] : ORG_DEFAULT_VALUE
   })
   console.log('Organization in chat:', organization)
-  const { t } = useLanguage()
   const { userInfo } = useAppUser()
 
   const errorDialogContentProps = {
@@ -250,10 +255,11 @@ const Chat = () => {
 
     let conversation: Conversation | null | undefined
     if (!conversationId) {
+      const prior = messages.filter(m => m.role !== ERROR)
       conversation = {
         id: conversationId ?? uuid(),
         title: question as string,
-        messages: [userMessage],
+        messages: [...prior, userMessage],
         date: new Date().toISOString()
       }
     } else {
@@ -421,11 +427,9 @@ const Chat = () => {
       }
     } else {
       console.log('organization in request 2:', organization)
-      request = {
-        messages: [userMessage].filter(answer => answer.role !== ERROR),
-        companyName: organization
-      }
-      setMessages(request.messages)
+      const prior = messages.filter(m => m.role !== ERROR)
+      request = { messages: [...prior, userMessage], companyName: organization }
+      setMessages([...prior, userMessage])
     }
     let result = {} as ChatResponse
     var errorResponseMessage = t('chat.defaultError')
@@ -526,10 +530,11 @@ const Chat = () => {
             ? resultConversation.messages.push(assistantMessage)
             : resultConversation.messages.push(toolMessage, assistantMessage)
         } else {
+          const prior = messages.filter(m => m.role !== ERROR)
           resultConversation = {
             id: result.history_metadata.conversation_id,
             title: result.history_metadata.title,
-            messages: [userMessage],
+            messages: [...prior, userMessage],
             date: result.history_metadata.date
           }
           isEmpty(toolMessage)
@@ -637,7 +642,7 @@ const Chat = () => {
         setActiveCitation(undefined)
         setIsCitationPanelOpen(false)
         setIsIntentsPanelOpen(false)
-        setMessages([])
+        setMessages([INITIAL_ASSISTANT])
       }
     }
     setClearingChat(false)
@@ -694,7 +699,7 @@ const Chat = () => {
 
   const newChat = () => {
     setProcessMessages(messageStatus.Processing)
-    setMessages([])
+    setMessages([INITIAL_ASSISTANT])
     setIsCitationPanelOpen(false)
     setIsIntentsPanelOpen(false)
     setActiveCitation(undefined)
@@ -712,7 +717,7 @@ const Chat = () => {
     if (appStateContext?.state.currentChat) {
       setMessages(appStateContext.state.currentChat.messages)
     } else {
-      setMessages([])
+      setMessages([INITIAL_ASSISTANT])
     }
   }, [appStateContext?.state.currentChat])
 

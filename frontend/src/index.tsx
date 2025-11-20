@@ -21,6 +21,7 @@ import { LanguageProvider } from './state/LanguageContext'
 import { BackgroundJobsProvider } from './state/BackgroundJobsContext'
 import ChatLemon from './pages/chat/ChatLemon'
 import LayoutLemon from './pages/layout/LayoutLemon'
+import { ORG_DEFAULT_VALUE } from './constants/variables'
 
 initializeIcons('https://res.cdn.office.net/files/fabric-cdn-prod_20240129.001/assets/icons/')
 
@@ -28,7 +29,7 @@ export default function App() {
   const getOrganizationFromHost = () => {
     const hostParts = window.location.hostname.split('.')
     console.log('Host parts in navbar:', hostParts)
-    return hostParts.length >= 4 ? hostParts[0] : 'default'
+    return hostParts[1] === 'chatbot' ? hostParts[0] : ORG_DEFAULT_VALUE
   }
 
   const organization = getOrganizationFromHost()

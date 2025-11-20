@@ -39,7 +39,7 @@ import { QuestionInput } from '../../components/QuestionInput'
 import { ChatHistoryPanel } from '../../components/ChatHistory/ChatHistoryPanel'
 import { AppStateContext } from '../../state/AppProvider'
 import { useBoolean } from '@fluentui/react-hooks'
-import { FILTER_FIELD, LEMON_INTRO_TEXT, logos } from '../../constants/variables'
+import { FILTER_FIELD, LEMON_INTRO_TEXT, logos, ORG_DEFAULT_VALUE } from '../../constants/variables'
 import { toast } from 'react-toastify'
 import { useLanguage } from '../../state/LanguageContext'
 import { useAppUser } from '../../state/AppUserProvider'
@@ -53,6 +53,7 @@ const enum messageStatus {
 }
 
 export default function ChatLemon() {
+  const { t } = useLanguage()
   const INITIAL_ASSISTANT: ChatMessage = {
     id: 'init-msg',
     role: 'assistant',
@@ -82,11 +83,9 @@ export default function ChatLemon() {
   const [userDetails, setUserDetails] = useState<UserInfo[]>([])
   const [organization, setOrganization] = useState(() => {
     const hostParts = window.location.hostname.split('.')
-    console.log('Host parts in chat:', hostParts)
-    return hostParts.length >= 4 ? hostParts[0] : 'default'
+    return hostParts[1] === 'chatbot' ? hostParts[0] : ORG_DEFAULT_VALUE
   })
   console.log('Organization in chat:', organization)
-  const { t } = useLanguage()
   const { userInfo } = useAppUser()
 
   const errorDialogContentProps = {

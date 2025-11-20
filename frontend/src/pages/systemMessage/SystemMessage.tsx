@@ -3,11 +3,21 @@ import axios from 'axios'
 import { toast } from 'react-toastify'
 import Navbar from '../../components/Navbar/Navbar'
 import NavbarLemon from '../../components/Navbar/NavbarLemon'
+import { ORG_DEFAULT_VALUE } from '../../constants/variables'
 
 const SystemMessage: React.FC = () => {
   const [systemMessage, setSystemMessage] = useState<string | null>(null)
   const [newMessage, setNewMessage] = useState<string>('')
   const [loading, setLoading] = useState<boolean>(false) // State for button loading
+
+  const getOrganizationFromHost = () => {
+    const hostParts = window.location.hostname.split('.')
+    console.log('Host parts in navbar:', hostParts)
+    return hostParts[1] === 'chatbot' ? hostParts[0] : ORG_DEFAULT_VALUE
+  }
+
+  const organization = getOrganizationFromHost()
+  const isLemon = organization === 'lemon' || organization === 'lemon2'
 
   // Fetch the system message when the component mounts
   useEffect(() => {
@@ -50,8 +60,7 @@ const SystemMessage: React.FC = () => {
 
   return (
     <div>
-      <NavbarLemon />
-
+      {isLemon ? <NavbarLemon /> : <Navbar />}
       <div className="container my-5">
         <h2>System Message</h2>
         {systemMessage ? (

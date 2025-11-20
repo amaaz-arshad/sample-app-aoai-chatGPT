@@ -17,6 +17,8 @@ export const TENANT = 'snapdeai'
 export const FILTER_FIELD = 'city'
 export const FILTER_FIELD2 = 'streetAddress'
 export const simpleApps = ['agindo', 'pinkvoss', 'publishone']
+export const ORG_DEFAULT_VALUE = 'lemon'
+
 export const logos = {
   navbar: {
     default: SnapLogo,
@@ -46,6 +48,9 @@ export const LEMON_INTRO_TEXT = `Willkommen! \nSchön, dass Du da bist. Möchtes
 
 export const translations: Record<Language, Record<string, string>> = {
   en: {
+    // Lemon intro text
+    'lemon.introText': `Welcome! \nGreat to have you here. Would you like to test your knowledge on a topic or do you have questions you'd like to clarify?`,
+    
     // Navbar
     'navbar.chatbotBySnap': 'Chatbot by SNAP',
     'navbar.chatbot': 'Chatbot',
@@ -224,6 +229,9 @@ export const translations: Record<Language, Record<string, string>> = {
     hide: 'Hide'
   },
   de: {
+    // Lemon intro text
+    'lemon.introText': `Willkommen! \nSchön, dass Du da bist. Möchtest Du Dein Wissen zu einem Thema selbst überprüfen oder hast Du Fragen, die Du klären möchtest?`,
+    
     // Navbar
     'navbar.chatbotBySnap': 'Chatbot von SNAP',
     'navbar.chatbot': 'Chatbot',

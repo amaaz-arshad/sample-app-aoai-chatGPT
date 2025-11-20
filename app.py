@@ -417,7 +417,9 @@ async def prepare_model_args(request_body, request_headers):
         container = database.get_container_client(USER_SYSTEM_MESSAGE_COLLECTION)
 
         # Query for the system message for the authenticated user
-        query = f"SELECT * FROM c WHERE c.user_id = '{user_id}'"
+        subdomain = request.host.split(".")[0] 
+        composite_user_id = f"{user_id}-{subdomain}"
+        query = f"SELECT * FROM c WHERE c.user_id = '{composite_user_id}'"
         results = list(container.query_items(query=query, enable_cross_partition_query=True))
 
         if results:
@@ -528,7 +530,7 @@ async def prepare_model_args(request_body, request_headers):
     # Add organization context to messages array (FOR EVERY MESSAGE)
     if organization_context:
         messages.append({
-            "role": "system",
+            "role": "user",
             "content": organization_context
         })
 
@@ -595,7 +597,6 @@ async def prepare_model_args(request_body, request_headers):
         # If companyName is empty, no filter will be applied in the data source
 
         public_base_url = request.url_root.rstrip("/").replace("http://", "https://")
-        # public_base_url = "https://7eb6a612b400.ngrok-free.app"
         data_source_config["parameters"]["embedding_dependency"] = {
             "type": "endpoint",
             "endpoint": f"{public_base_url}/api/embed",
@@ -1666,7 +1667,10 @@ async def get_system_message():
         container = cosmos_client.get_database_client(app_settings.chat_history.database).get_container_client(USER_SYSTEM_MESSAGE_COLLECTION)
 
         # Check if the user already has a system message in the collection
-        query = f"SELECT * FROM c WHERE c.user_id = '{user_id}'"
+        subdomain = request.host.split(".")[0] 
+        composite_user_id = f"{user_id}-{subdomain}"
+        print("composite_user_id:", composite_user_id)
+        query = f"SELECT * FROM c WHERE c.user_id = '{composite_user_id}'"
         results = list(container.query_items(query=query, enable_cross_partition_query=True))
 
         # If no entry exists, return the default system message from settings
@@ -1711,7 +1715,9 @@ async def update_system_message():
             print(f"Created collection '{USER_SYSTEM_MESSAGE_COLLECTION}'.")
 
         # Query for the system message
-        query = f"SELECT * FROM c WHERE c.user_id = '{user_id}'"
+        subdomain = request.host.split(".")[0] 
+        composite_user_id = f"{user_id}-{subdomain}"
+        query = f"SELECT * FROM c WHERE c.user_id = '{composite_user_id}'"
         results = list(container.query_items(query=query, enable_cross_partition_query=True))
 
         if results:
@@ -1723,7 +1729,7 @@ async def update_system_message():
             # Insert a new system message for the user, ensuring to include the 'id'
             container.create_item({
                 "id": str(uuid.uuid4()),  # Generate a unique id for the system message
-                "user_id": user_id,
+                "user_id": composite_user_id,
                 "system_message": new_system_message
             })
 

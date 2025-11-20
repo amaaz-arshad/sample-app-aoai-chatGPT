@@ -1,7 +1,7 @@
 import React from 'react'
 import './NavbarLemon.css'
 import { useLanguage } from '../../state/LanguageContext'
-import { LEMON_HEADING, logos } from '../../constants/variables'
+import { LEMON_HEADING, logos, ORG_DEFAULT_VALUE } from '../../constants/variables'
 
 // Fluent UI icons
 import {
@@ -26,7 +26,7 @@ export default function NavbarLemon({ chatbotName, onStartNewChat, onEndChat, on
 
   const getOrganizationFromHost = () => {
     const hostParts = window.location.hostname.split('.')
-    return hostParts.length >= 4 ? hostParts[0] : 'default'
+    return hostParts[1] === 'chatbot' ? hostParts[0] : ORG_DEFAULT_VALUE
   }
 
   const organization = getOrganizationFromHost()

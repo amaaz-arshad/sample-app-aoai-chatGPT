@@ -39,7 +39,7 @@ import { QuestionInput } from '../../components/QuestionInput'
 import { ChatHistoryPanel } from '../../components/ChatHistory/ChatHistoryPanel'
 import { AppStateContext } from '../../state/AppProvider'
 import { useBoolean } from '@fluentui/react-hooks'
-import { FILTER_FIELD, LEMON_INTRO_TEXT, logos, ORG_INITIAL } from '../../constants/variables'
+import { FILTER_FIELD, LEMON_INTRO_TEXT, logos } from '../../constants/variables'
 import { toast } from 'react-toastify'
 import { useLanguage } from '../../state/LanguageContext'
 import { useAppUser } from '../../state/AppUserProvider'
@@ -55,7 +55,7 @@ const isOrgDomain = hostname[1] == 'chatbot'
 
 // Helper: create initial assistant message for lemon orgs
 const createInitialAssistant = (organization: string): ChatMessage | null =>
-  ORG_INITIAL.includes(organization)
+  organization === 'lemon' || organization === 'lemon2'
     ? {
         id: 'init-msg',
         role: 'assistant',
@@ -124,6 +124,7 @@ const Chat = () => {
           setOrganization(newOrg)
         }
       }
+      
     }
     setIsAuthLoading(false)
   }, [userInfo])
@@ -234,28 +235,15 @@ const Chat = () => {
 
     if (resultMessage.role === TOOL) toolMessage = resultMessage
 
-    // UPDATED: avoid re-appending user/assistant on every chunk; just add/update tool/assistant once
-    setMessages(prev => {
-      const updated = [...prev]
-
-      if (resultMessage.role === TOOL && !isEmpty(toolMessage)) {
-        if (updated.length === 0 || updated[updated.length - 1].role !== TOOL) {
-          updated.push(toolMessage)
-        } else {
-          updated[updated.length - 1] = toolMessage
-        }
-      }
-
-      if (resultMessage.role === ASSISTANT) {
-        if (updated.length === 0 || updated[updated.length - 1].role !== ASSISTANT) {
-          updated.push(assistantMessage)
-        } else {
-          updated[updated.length - 1] = assistantMessage
-        }
-      }
-
-      return updated
-    })
+    if (!conversationId) {
+      isEmpty(toolMessage)
+        ? setMessages(prev => [...prev, userMessage, assistantMessage])
+        : setMessages(prev => [...prev, userMessage, toolMessage, assistantMessage])
+    } else {
+      isEmpty(toolMessage)
+        ? setMessages(prev => [...prev, assistantMessage])
+        : setMessages(prev => [...prev, toolMessage, assistantMessage])
+    }
   }
 
   const makeApiRequestWithoutCosmosDB = async (question: ChatMessage['content'], conversationId?: string) => {
@@ -366,7 +354,9 @@ const Chat = () => {
         }
         conversation.messages.push(toolMessage, assistantMessage)
         appStateContext?.dispatch({ type: 'UPDATE_CURRENT_CHAT', payload: conversation })
-        // messages already updated via processResultMessage; do not append again here
+        // messages already updated via processResultMessage; no need to append again here,
+        // but keeping your pattern:
+        setMessages(prev => [...prev, toolMessage, assistantMessage])
       }
     } catch (e) {
       if (!abortController.signal.aborted) {
@@ -587,7 +577,9 @@ const Chat = () => {
           return
         }
         appStateContext?.dispatch({ type: 'UPDATE_CURRENT_CHAT', payload: resultConversation })
-        // messages already updated via processResultMessage; do not append again here
+        isEmpty(toolMessage)
+          ? setMessages(prev => [...prev, assistantMessage])
+          : setMessages(prev => [...prev, toolMessage, assistantMessage])
       }
     } catch (e) {
       if (!abortController.signal.aborted) {
@@ -1002,7 +994,7 @@ const Chat = () => {
             )}
 
             <Stack horizontal className={styles.chatInput}>
-              {/* {isLoading && messages.length > 0 && (
+              {isLoading && messages.length > 0 && (
                 <Stack
                   horizontal
                   className={styles.stopGeneratingContainer}
@@ -1016,7 +1008,7 @@ const Chat = () => {
                     {t('chat.stopGenerating')}
                   </span>
                 </Stack>
-              )} */}
+              )}
               <Stack>
                 {appStateContext?.state.isCosmosDBAvailable?.status !== CosmosDBStatus.NotConfigured && (
                   <CommandBarButton
@@ -1087,7 +1079,6 @@ const Chat = () => {
                 placeholder={t('chat.inputPlaceholder')}
                 disabled={isLoading}
                 onSend={(question, id) => {
-                  appStateContext?.state.isCosmosDBAvailable?.status !== CosmosDBStatus.NotConfigured &&
                   appStateContext?.state.isCosmosDBAvailable?.cosmosDB
                     ? makeApiRequestWithCosmosDB(question, id)
                     : makeApiRequestWithoutCosmosDB(question, id)
@@ -1165,7 +1156,7 @@ const Chat = () => {
               </Stack>
               <Stack horizontalAlign="space-between">
                 {appStateContext?.state?.answerExecResult[answerId]?.map((execResult: ExecResults, index) => (
-                  <Stack className={styles.exectResultList} verticalAlign="space-between" key={index}>
+                  <Stack className={styles.exectResultList} verticalAlign="space-between">
                     <>
                       <span>{t('chat.intent')}:</span> <p>{execResult.intent}</p>
                     </>

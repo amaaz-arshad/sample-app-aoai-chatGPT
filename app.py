@@ -526,7 +526,7 @@ async def prepare_model_args(request_body, request_headers):
     # Add organization context to messages array (FOR EVERY MESSAGE)
     if organization_context:
         messages.append({
-            "role": "system",
+            "role": "user",
             "content": organization_context
         })
 

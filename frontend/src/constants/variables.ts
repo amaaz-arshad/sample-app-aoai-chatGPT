@@ -15,6 +15,7 @@ export const TENANT = 'snapdeai'
 export const FILTER_FIELD = 'city'
 export const FILTER_FIELD2 = 'streetAddress'
 export const simpleApps = ['agindo', 'pinkvoss', 'publishone']
+export const ORG_INITIAL = ['lemon', 'lemon2', 'publishone', 'publishone2', 'acme']
 export const logos = {
   navbar: {
     default: SnapLogo,

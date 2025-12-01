@@ -63,6 +63,14 @@ from azure.identity.aio import ClientSecretCredential  # async version
 import tiktoken
 from typing import List, Dict
 import random
+from azure.search.documents.knowledgebases import KnowledgeBaseRetrievalClient
+from azure.search.documents.knowledgebases.models import (
+    KnowledgeBaseRetrievalRequest,
+    KnowledgeBaseMessage,
+    KnowledgeBaseMessageTextContent,
+    SearchIndexKnowledgeSourceParams,
+)
+from azure.search.documents.indexes.models import KnowledgeRetrievalMediumReasoningEffort
 
 # Add pricing constants (GPT-4o pricing as of 2024)
 GPT4O_INPUT_PRICE_PER_1K_TOKENS = 0.0025  # $2.50 per 1M tokens
@@ -108,11 +116,25 @@ blob_service_client = BlobServiceClient(account_url=blob_service_url, credential
 # Create a SearchClient instance
 search_client = SearchClient(service_endpoint, index_name, AzureKeyCredential(api_key))
 
-# Initialize the Document Intelligence Client
-# document_intelligence_client = DocumentIntelligenceClient(
-#     endpoint=os.getenv("REACT_APP_AZURE_DOC_INTELLIGENCE_ENDPOINT"), 
-#     credential=AzureKeyCredential(os.getenv("REACT_APP_AZURE_DOC_INTELLIGENCE_KEY"))
-# )
+# --- NEW: Agentic retrieval knowledge base configuration ---
+# These should be set in your environment or config.
+KNOWLEDGE_BASE_NAME = os.getenv("AZURE_SEARCH_KB_NAME")
+KNOWLEDGE_SOURCE_NAME = os.getenv("AZURE_SEARCH_KS_NAME")
+
+if not KNOWLEDGE_BASE_NAME or not KNOWLEDGE_SOURCE_NAME:
+    logging.warning(
+        "AZURE_SEARCH_KB_NAME or AZURE_SEARCH_KS_NAME not set. "
+        "Agentic retrieval will not work until these are configured."
+    )
+
+knowledge_base_client = None
+if KNOWLEDGE_BASE_NAME:
+    knowledge_base_client = KnowledgeBaseRetrievalClient(
+        endpoint=service_endpoint,
+        knowledge_base_name=KNOWLEDGE_BASE_NAME,
+        credential=AzureKeyCredential(api_key),
+    )
+
 
 bp = Blueprint("routes", __name__, static_folder="static", template_folder="static")
 
@@ -393,15 +415,18 @@ async def init_cosmosdb_client():
 
     return cosmos_conversation_client
 
-
-async def prepare_model_args(request_body, request_headers):
+async def build_messages_and_metadata(request_body, request_headers):
+    """
+    Build the OpenAI-style messages array + system_message + user_json + companyName,
+    reusing the existing CosmosDB system-message logic.
+    """
     request_messages = request_body.get("messages", [])
     messages = []
 
-    # Extract the bearer token from the Authorization header
+    # Extract the bearer token from the Authorization header (unchanged)
     auth_header = request_headers.get("Authorization")
     bearer_token = auth_header.split("Bearer ")[1] if auth_header and auth_header.startswith("Bearer ") else None
-    
+
     # Retrieve the system message from Cosmos DB for the authenticated user
     authenticated_user = get_authenticated_user_details(request_headers)
     user_id = authenticated_user["user_principal_id"]
@@ -421,48 +446,58 @@ async def prepare_model_args(request_body, request_headers):
     except Exception as e:
         logging.error(f"Error retrieving system message for user {user_id}: {e}")
 
-    # Add the system message to the messages array (unchanged)
-    if not app_settings.datasource:
-        messages = [
-            {
-                "role": "system",
-                "content": system_message
-            }
-        ]
-    
-    # Get organization context (FRESH fetch when starting new conversation, cached for existing conversations)
-    companyName = request_body.get("companyName", "").strip()
-    conversation_id = request_body.get("conversation_id")
-    
+    # Always prepend system message (this preserves and actually strengthens your existing behavior)
+    messages = [
+        {
+            "role": "system",
+            "content": system_message
+        }
+    ]
+
     # Now add the conversation messages from the request
     for message in request_messages:
-        if message:
-            if message["role"] == "assistant" and "context" in message:
-                context_obj = json.loads(message["context"])
-                messages.append(
-                    {
-                        "role": message["role"],
-                        "content": message["content"],
-                        "context": context_obj
-                    }
-                )
-            else:
-                messages.append(
-                    {
-                        "role": message["role"],
-                        "content": message["content"]
-                    }
-                )
+        if not message:
+            continue
+        if message["role"] == "assistant" and "context" in message:
+            context_obj = json.loads(message["context"])
+            messages.append(
+                {
+                    "role": message["role"],
+                    "content": message["content"],
+                    "context": context_obj
+                }
+            )
+        else:
+            messages.append(
+                {
+                    "role": message["role"],
+                    "content": message["content"]
+                }
+            )
 
     user_json = None
     if MS_DEFENDER_ENABLED:
         authenticated_user_details = get_authenticated_user_details(request_headers)
         conversation_id = request_body.get("conversation_id", None)
         application_name = app_settings.ui.title
-        user_json = get_msdefender_user_json(authenticated_user_details, request_headers, conversation_id, application_name)
+        user_json = get_msdefender_user_json(
+            authenticated_user_details, request_headers, conversation_id, application_name
+        )
 
+    # Get organization context from body for filtering
+    companyName = request_body.get("companyName", "").strip()
+
+    # For debugging if needed:
     # print(f"System message used: {system_message}")
     print(f"Final messages array: {messages}")
+
+    return messages, system_message, user_json, companyName
+
+
+async def prepare_model_args(request_body, request_headers):
+    messages, system_message, user_json, companyName = await build_messages_and_metadata(
+        request_body, request_headers
+    )
 
     model_args = {
         "messages": messages,
@@ -472,74 +507,17 @@ async def prepare_model_args(request_body, request_headers):
         "stop": app_settings.azure_openai.stop_sequence,
         "stream": app_settings.azure_openai.stream,
         "model": app_settings.azure_openai.model,
-        "user": user_json
+        "user": user_json,
     }
-    
-    if app_settings.datasource:
-        # Get the existing data source configuration
-        data_source_config = app_settings.datasource.construct_payload_configuration(request=request)
 
-        # Ensure "parameters" exists in the data source configuration
-        if "parameters" not in data_source_config:
-            data_source_config["parameters"] = {}
-
-        # Use the original system message (unchanged) for role_information
-        data_source_config["parameters"]["role_information"] = system_message
-        
-        # Get the companyName from the request body
-        companyName = request_body.get("companyName", "").strip()
-        
-        # Apply the filter only if companyName has a value
-        if companyName:
-            # Convert companyName to lowercase
-            companyName = companyName.lower().strip('.')
-            data_source_config["parameters"]["filter"] = f"organization eq '{companyName}'"
-        # If companyName is empty, no filter will be applied in the data source
-
-        # Store the configuration into the extra_body
-        model_args["extra_body"] = {
-            "data_sources": [
-                data_source_config
-            ]
-        }
+    # No more basic RAG via extra_body / data_sources.
+    # All retrieval will be handled via agentic retrieval (KnowledgeBaseRetrievalClient).
 
     model_args_clean = copy.deepcopy(model_args)
-    if model_args_clean.get("extra_body"):
-        secret_params = [
-            "key",
-            "connection_string",
-            "embedding_key",
-            "encoded_api_key",
-            "api_key",
-        ]
-        for secret_param in secret_params:
-            if model_args_clean["extra_body"]["data_sources"][0]["parameters"].get(
-                secret_param
-            ):
-                model_args_clean["extra_body"]["data_sources"][0]["parameters"][
-                    secret_param
-                ] = "*****"
-        authentication = model_args_clean["extra_body"]["data_sources"][0][
-            "parameters"
-        ].get("authentication", {})
-        for field in authentication:
-            if field in secret_params:
-                model_args_clean["extra_body"]["data_sources"][0]["parameters"][
-                    "authentication"
-                ][field] = "*****"
-        embeddingDependency = model_args_clean["extra_body"]["data_sources"][0][
-            "parameters"
-        ].get("embedding_dependency", {})
-        if "authentication" in embeddingDependency:
-            for field in embeddingDependency["authentication"]:
-                if field in secret_params:
-                    model_args_clean["extra_body"]["data_sources"][0]["parameters"][
-                        "embedding_dependency"
-                    ]["authentication"][field] = "*****"
-
-    logging.debug(f"REQUEST BODY: {json.dumps(model_args_clean, indent=4)}")
+    logging.debug(f"REQUEST BODY (no RAG extra_body): {json.dumps(model_args_clean, indent=4)}")
 
     return model_args
+
 
 
 async def promptflow_request(request):
@@ -595,6 +573,146 @@ async def send_chat_request(request_body, request_headers):
         raise e
 
     return response, apim_request_id
+
+async def agentic_retrieval_chat(request_body, request_headers):
+    """
+    Use Azure AI Search Knowledge Base (agentic retrieval) instead of basic RAG.
+    - Uses the same messages constructed from CosmosDB system message and chat history.
+    - Applies companyName filter via filter_add_on on the search index knowledge source.
+    - Returns a simple assistant message object consumable by the frontend.
+    """
+    if knowledge_base_client is None:
+        raise RuntimeError("Knowledge base client is not configured. Set AZURE_SEARCH_KB_NAME / KS_NAME.")
+
+    messages, system_message, user_json, companyName = await build_messages_and_metadata(
+        request_body, request_headers
+    )
+
+    # Build KB messages, skipping 'system' role because KB system behavior is configured in the KB itself.
+    kb_messages = [
+        KnowledgeBaseMessage(
+            role=m["role"],
+            content=[KnowledgeBaseMessageTextContent(text=m["content"])]
+        )
+        for m in messages
+        if m.get("role") != "system"
+    ]
+
+    # Build filter_add_on from companyName (organization filter)
+    filter_add_on = None
+    if companyName:
+        # Normalize and escape for OData
+        company_normalized = companyName.strip().lower().strip(".")
+        from_odata = _escape_odata_string(company_normalized)
+        filter_add_on = f"organization eq '{from_odata}'"
+
+    # Knowledge source params (search index KS)
+    ks_params_kwargs = {
+        "knowledge_source_name": KNOWLEDGE_SOURCE_NAME,
+        "include_references": True,
+        "include_reference_source_data": True,
+        "always_query_source": True,
+    }
+    if filter_add_on:
+        ks_params_kwargs["filter_add_on"] = filter_add_on
+
+    ks_params = SearchIndexKnowledgeSourceParams(**ks_params_kwargs)
+
+    # Build retrieval request
+    req = KnowledgeBaseRetrievalRequest(
+        messages=kb_messages,
+        knowledge_source_params=[ks_params],
+        include_activity=True,
+        retrieval_reasoning_effort=KnowledgeRetrievalMediumReasoningEffort,
+        # You can set output_mode here if needed; default is whatever the KB is configured for.
+        # output_mode=
+    )
+
+    # Run retrieval in a thread to avoid blocking the event loop
+    def _do_retrieve():
+        return knowledge_base_client.retrieve(retrieval_request=req)
+
+    result = await asyncio.to_thread(_do_retrieve)
+
+    # --- Extract answer text ---
+    answer_text = ""
+    try:
+        if getattr(result, "response", None):
+            first_response = result.response[0]
+            contents = getattr(first_response, "content", None) or []
+            if contents:
+                answer_text = getattr(contents[0], "text", "") or ""
+    except Exception as e:
+        logging.error(f"Error extracting answer text: {e}")
+        answer_text = ""
+
+    # --- Extract raw references from KB ---
+    references = []
+    try:
+        refs = getattr(result, "references", None) or []
+        for ref in refs:
+            source_data = getattr(ref, "source_data", None) or getattr(ref, "sourceData", None)
+            if source_data:
+                references.append(source_data)
+    except Exception as e:
+        logging.error(f"Error extracting references: {e}")
+
+    # --- Convert KB references to your UI's Citation format ---
+    citations = []
+    for ref in references:
+        citations.append({
+            "id": str(uuid.uuid4()),
+            "title": ref.get("title", ""),
+            "content": ref.get("content", ""),
+            "filepath": ref.get("filepath") or ref.get("url") or "",
+            "url": ref.get("url", ""),
+            "chunk_id": ref.get("chunk_id", "0"),
+        })
+
+    # --- Prepare history_metadata (required by frontend) ---
+    req_history = request_body.get("history_metadata")
+    conversation_id = request_body.get("conversation_id")
+
+    if req_history:
+        # Continue an existing conversation
+        history_metadata = req_history
+    else:
+        # New conversation
+        # Generate title from user’s last message
+        last_user_msg = None
+        for m in reversed(messages):
+            if m["role"] == "user":
+                last_user_msg = m["content"]
+                break
+
+        history_metadata = {
+            "conversation_id": conversation_id or str(uuid.uuid4()),
+            "title": (last_user_msg[:50] + "...") if isinstance(last_user_msg, str) else "New Chat",
+            "date": datetime.utcnow().isoformat(),
+        }
+    
+    # --- Build ChatResponse identical to AOAI-on-your-data ---
+    chat_response = {
+        "id": str(uuid.uuid4()),
+        "choices": [{
+            "messages": [
+                {
+                    "role": "tool",
+                    "content": json.dumps({
+                        "citations": citations,
+                        "data_points": citations,
+                    }),
+                },
+                {
+                    "role": "assistant",
+                    "content": answer_text,
+                },
+            ]
+        }],
+        "history_metadata": history_metadata,
+    }
+
+    return chat_response
 
 
 async def complete_chat_request(request_body, request_headers):
@@ -654,6 +772,14 @@ async def stream_chat_request(request_body, request_headers):
 
 async def conversation_internal(request_body, request_headers):
     try:
+        # If a datasource is configured, we now interpret that as:
+        # "use agentic retrieval (knowledge base) instead of basic AOAI-on-your-data RAG"
+        if app_settings.datasource and not app_settings.base_settings.use_promptflow:
+            # We do NOT stream here; KnowledgeBaseRetrievalClient.retrieve is non-streaming.
+            assistant_message = await agentic_retrieval_chat(request_body, request_headers)
+            return jsonify(assistant_message)
+
+        # No datasource -> normal AOAI chat (existing behavior)
         if app_settings.azure_openai.stream and not app_settings.base_settings.use_promptflow:
             result = await stream_chat_request(request_body, request_headers)
             response = await make_response(format_as_ndjson(result))
@@ -670,6 +796,7 @@ async def conversation_internal(request_body, request_headers):
             return jsonify({"error": str(ex)}), ex.status_code
         else:
             return jsonify({"error": str(ex)}), 500
+
 
 
 @bp.route("/conversation", methods=["POST"])

@@ -61,8 +61,10 @@ import queue
 from azure.identity.aio import ClientSecretCredential  # async version
 # Add to existing imports
 import tiktoken
-from typing import List, Dict
+from typing import Dict, List, Optional, Tuple
 import random
+from enum import Enum
+import re
 
 # Add pricing constants (GPT-4o pricing as of 2024)
 GPT4O_INPUT_PRICE_PER_1K_TOKENS = 0.0025  # $2.50 per 1M tokens
@@ -103,6 +105,12 @@ blob_service_url = os.getenv("REACT_APP_AZURE_BLOB_URL")
 # container_name = "pdf-container2"
 container_name = os.getenv("REACT_APP_AZURE_BLOB_CONTAINER_NAME")
 storage_key = os.getenv("REACT_APP_AZURE_BLOB_STORAGE_KEY")
+
+# Add to your settings or environment variables
+AGENTIC_RETRIEVAL_ENABLED = os.environ.get("AGENTIC_RETRIEVAL_ENABLED", "true").lower() == "true"
+MAX_AGENTIC_STEPS = int(os.environ.get("MAX_AGENTIC_STEPS", "3"))
+AGENTIC_THRESHOLD_TOKENS = int(os.environ.get("AGENTIC_THRESHOLD_TOKENS", "100"))
+
 blob_service_client = BlobServiceClient(account_url=blob_service_url, credential=storage_key)
 
 # Create a SearchClient instance
@@ -134,7 +142,381 @@ JOB_EXPIRY_SECONDS = 86400  # 24 hours
 MAX_QUEUE_WORKERS = 1  # Process one batch at a time
 JOB_QUEUE_MAX_SIZE = 100  # Maximum jobs in queue
 
-conversation_context_cache = {}
+
+class RetrievalStrategy(Enum):
+    VECTOR_SEMANTIC = "vector_semantic"
+    KEYWORD_HYBRID = "keyword_hybrid" 
+    MULTI_QUERY = "multi_query"
+    HYDE = "hyde"
+    AGENTIC_MULTI_STEP = "agentic_multi_step"
+
+def is_complex_question(question: str) -> bool:
+    """
+    Determine if a question is complex enough to warrant agentic retrieval
+    """
+    complex_indicators = [
+        r'\b(compare|contrast|analyze|evaluate|advantages?|disadvantages?|pros?|cons?)\b',
+        r'\b(step by step|how to|process|procedure|guide)\b',
+        r'\b(why|explain|reasons?|causes?)\b',
+        r'\b(differences? between|similarities? between)\b',
+        r'\b(best|worst|optimal|recommend)\b',
+        r'.*\?.*\?',  # Multiple questions
+        r'.{100,}',   # Long questions
+    ]
+    
+    question_lower = question.lower()
+    return True
+    # return any(re.search(pattern, question_lower) for pattern in complex_indicators)
+
+async def execute_agentic_retrieval(question: str, organization: str, conversation_history: List[Dict] = None) -> Dict:
+    """
+    Main entry point for agentic retrieval - called BEFORE the main Azure OpenAI call
+    """
+    if not is_complex_question(question):
+        return {"strategy": RetrievalStrategy.VECTOR_SEMANTIC.value, "documents": []}
+    
+    # Determine strategy based on question type
+    strategy = await determine_retrieval_strategy(question, conversation_history or [])
+    
+    # Execute the chosen strategy
+    if strategy == RetrievalStrategy.MULTI_QUERY:
+        documents = await multi_query_retrieval(question, organization)
+    elif strategy == RetrievalStrategy.HYDE:
+        documents = await hyde_retrieval(question, organization)
+    elif strategy == RetrievalStrategy.AGENTIC_MULTI_STEP:
+        result = await agentic_multi_step_retrieval(question, organization)
+        documents = result.get("documents", [])
+    else:
+        documents = []
+    
+    return {
+        "strategy": strategy.value,
+        "documents": documents,
+        "enhanced_context": format_documents_for_context(documents)
+    }
+    
+def format_documents_for_context(documents: List[Dict]) -> str:
+    """Format retrieved documents for LLM context"""
+    if not documents:
+        return ""
+    
+    context_parts = ["Based on additional research, here are relevant documents:"]
+    
+    for i, doc in enumerate(documents, 1):
+        source_info = []
+        if doc.get("file"):
+            source_info.append(f"File: {doc['file']}")
+        if doc.get("page_number"):
+            source_info.append(f"Page: {doc['page_number']}")
+        if doc.get("title"):
+            source_info.append(f"Title: {doc['title']}")
+        
+        source_str = " | ".join(source_info)
+        content_preview = doc.get("content", "")[:800]  # Limit content length
+        
+        context_parts.append(f"\n{i}. [{source_str}]:\n{content_preview}")
+    
+    return "\n".join(context_parts)
+
+
+async def determine_retrieval_strategy(question: str, conversation_history: List[Dict]) -> RetrievalStrategy:
+    """
+    Use simple heuristics to determine retrieval strategy (avoiding LLM calls for now)
+    """
+    question_lower = question.lower()
+    
+    # Multi-query for analytical questions
+    if any(word in question_lower for word in ['compare', 'contrast', 'advantages', 'disadvantages', 'pros', 'cons']):
+        return RetrievalStrategy.MULTI_QUERY
+    
+    # HYDE for explanatory questions
+    if any(word in question_lower for word in ['explain', 'how does', 'how to', 'why']):
+        return RetrievalStrategy.HYDE
+    
+    # Multi-step for very complex questions
+    if len(question.split()) > 15 or 'step by step' in question_lower:
+        return RetrievalStrategy.AGENTIC_MULTI_STEP
+    
+    return RetrievalStrategy.VECTOR_SEMANTIC
+
+async def generate_search_queries(question: str, strategy: RetrievalStrategy) -> List[str]:
+    """
+    Generate multiple search queries for complex questions
+    """
+    if strategy != RetrievalStrategy.MULTI_QUERY:
+        return [question]
+    
+    system_prompt = """
+    Generate 3 different search queries for the user's question. 
+    Each query should approach the question from a different angle or perspective.
+    Return the queries as a JSON array.
+    """
+    
+    azure_openai_client = await init_openai_client()
+    
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": f"Question: {question}"}
+    ]
+    
+    response = await azure_openai_client.chat.completions.create(
+        model=app_settings.azure_openai.model,
+        messages=messages,
+        temperature=0.7,
+        response_format={"type": "json_object"}
+    )
+    
+    try:
+        result = json.loads(response.choices[0].message.content)
+        return result.get("queries", [question])
+    except:
+        return [question]
+
+async def multi_query_retrieval(question: str, organization: str, top_k: int = 5) -> List[Dict]:
+    """
+    Generate multiple search queries for complex questions
+    """
+    # Simple query variations without LLM
+    base_queries = [
+        question,
+        f"what is {question}",
+        f"information about {question}",
+        f"details {question}"
+    ]
+    
+    all_results = []
+    
+    for query in base_queries[:2]:  # Limit to 2 queries for performance
+        try:
+            escaped_org = _escape_odata_string(organization)
+            filter_expr = f"organization eq '{escaped_org}'" if organization else None
+            
+            results = search_client.search(
+                search_text=query,
+                filter=filter_expr,
+                top=top_k,
+                select="id,title,content,file,page_number,category,tags,url,organization"
+            )
+            
+            for result in results:
+                all_results.append({
+                    **result,
+                    "source_query": query,
+                    "score": result.get("@search.score", 0)
+                })
+        except Exception as e:
+            logging.error(f"Query failed for '{query}': {e}")
+            continue
+    
+    # Deduplicate and sort
+    unique_results = {}
+    for result in all_results:
+        doc_id = result["id"]
+        if doc_id not in unique_results or result["score"] > unique_results[doc_id]["score"]:
+            unique_results[doc_id] = result
+    
+    return sorted(unique_results.values(), key=lambda x: x["score"], reverse=True)[:top_k]
+
+
+async def hyde_retrieval(question: str, organization: str, top_k: int = 5) -> List[Dict]:
+    """
+    Simple HYDE implementation without LLM - use question expansion
+    """
+    # Create expanded queries based on question type
+    explanatory_phrases = [
+        f"explanation of {question}",
+        f"guide to {question}", 
+        f"understanding {question}",
+        f"overview of {question}"
+    ]
+    
+    all_results = []
+    
+    for query in explanatory_phrases[:2]:
+        try:
+            escaped_org = _escape_odata_string(organization)
+            filter_expr = f"organization eq '{escaped_org}'" if organization else None
+            
+            results = search_client.search(
+                search_text=query,
+                filter=filter_expr, 
+                top=top_k,
+                select="id,title,content,file,page_number,category,tags,url,organization"
+            )
+            
+            for result in results:
+                all_results.append(result)
+        except Exception as e:
+            logging.error(f"HYDE query failed: {e}")
+            continue
+    
+    # Deduplicate
+    unique_results = {}
+    for result in all_results:
+        doc_id = result["id"]
+        if doc_id not in unique_results:
+            unique_results[doc_id] = result
+    
+    return list(unique_results.values())[:top_k]
+
+
+async def agentic_multi_step_retrieval(question: str, organization: str, max_steps: int = 2) -> Dict:
+    """
+    Simplified multi-step retrieval for complex questions
+    """
+    collected_docs = []
+    
+    # Step 1: Broad search for overview
+    overview_docs = await execute_basic_search(question, organization, top_k=3)
+    collected_docs.extend(overview_docs)
+    
+    # Step 2: If we have documents, extract key terms for follow-up search
+    if collected_docs:
+        key_terms = extract_key_terms_from_docs(collected_docs, question)
+        if key_terms:
+            detailed_query = f"{question} {key_terms}"
+            detailed_docs = await execute_basic_search(detailed_query, organization, top_k=3)
+            collected_docs.extend(detailed_docs)
+    
+    # Deduplicate
+    unique_docs = {}
+    for doc in collected_docs:
+        doc_id = doc["id"]
+        if doc_id not in unique_docs:
+            unique_docs[doc_id] = doc
+    
+    return {
+        "documents": list(unique_docs.values()),
+        "steps_performed": min(2, max_steps)
+    }
+    
+
+def extract_key_terms_from_docs(documents: List[Dict], original_question: str) -> str:
+    """Extract key terms from documents for follow-up searches"""
+    # Simple term extraction - look for frequent nouns or technical terms
+    all_content = " ".join([doc.get("content", "")[:500] for doc in documents])
+    all_content += " " + original_question
+    
+    # Extract potential key terms (simple approach)
+    words = re.findall(r'\b[A-Za-z]{5,}\b', all_content)
+    word_freq = {}
+    for word in words:
+        word_lower = word.lower()
+        if word_lower not in ['which', 'what', 'where', 'when', 'how', 'why', 'about']:
+            word_freq[word_lower] = word_freq.get(word_lower, 0) + 1
+    
+    # Get top 3 most frequent terms
+    top_terms = sorted(word_freq.items(), key=lambda x: x[1], reverse=True)[:3]
+    return " ".join([term for term, freq in top_terms])
+    
+
+async def execute_basic_search(query: str, organization: str, top_k: int = 5) -> List[Dict]:
+    """Execute a basic search with the given query"""
+    try:
+        escaped_org = _escape_odata_string(organization)
+        filter_expr = f"organization eq '{escaped_org}'" if organization else None
+        
+        results = search_client.search(
+            search_text=query,
+            filter=filter_expr,
+            top=top_k,
+            select="id,title,content,file,page_number,category,tags,url,organization"
+        )
+        
+        return list(results)
+    except Exception as e:
+        logging.error(f"Basic search failed: {e}")
+        return []
+    
+
+async def evaluate_sufficiency(context: Dict, original_question: str) -> bool:
+    """
+    Evaluate if we have sufficient information to answer the question
+    """
+    system_prompt = """
+    Determine if the collected documents provide sufficient information to 
+    comprehensively answer the original question. Consider:
+    - Coverage of all aspects of the question
+    - Depth of technical details
+    - Presence of conflicting information
+    
+    Return only 'true' or 'false'.
+    """
+    
+    documents_text = "\n\n".join([doc.get("content", "")[:1000] for doc in context["collected_documents"][:5]])
+    
+    azure_openai_client = await init_openai_client()
+    
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": f"Original Question: {original_question}\n\nCollected Documents:\n{documents_text}"}
+    ]
+    
+    response = await azure_openai_client.chat.completions.create(
+        model=app_settings.azure_openai.model,
+        messages=messages,
+        temperature=0.1,
+        max_tokens=10
+    )
+    
+    return response.choices[0].message.content.strip().lower() == 'true'
+
+async def plan_next_step(context: Dict, original_question: str) -> Dict:
+    """
+    Plan the next retrieval step based on current information
+    """
+    system_prompt = """
+    Analyze the current information and determine what's missing or needs clarification.
+    Return a JSON with:
+    - "continue": boolean indicating whether to continue
+    - "reasoning": brief explanation of what's missing
+    - "next_query": the next search query to fill gaps
+    """
+    
+    documents_text = "\n\n".join([doc.get("content", "")[:800] for doc in context["collected_documents"][:4]])
+    
+    azure_openai_client = await init_openai_client()
+    
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": f"Original Question: {original_question}\n\nCurrent Documents:\n{documents_text}"}
+    ]
+    
+    response = await azure_openai_client.chat.completions.create(
+        model=app_settings.azure_openai.model,
+        messages=messages,
+        temperature=0.3,
+        response_format={"type": "json_object"}
+    )
+    
+    try:
+        return json.loads(response.choices[0].message.content)
+    except:
+        return {"continue": False, "reasoning": "Error parsing response", "next_query": original_question}
+    
+
+def format_retrieved_documents(documents: List[Dict]) -> str:
+    """
+    Format retrieved documents for LLM context
+    """
+    context_parts = []
+    
+    for i, doc in enumerate(documents, 1):
+        source_info = []
+        if doc.get("file"):
+            source_info.append(f"File: {doc['file']}")
+        if doc.get("page_number"):
+            source_info.append(f"Page: {doc['page_number']}")
+        if doc.get("title"):
+            source_info.append(f"Title: {doc['title']}")
+        
+        source_str = " | ".join(source_info)
+        content = doc.get("content", "")[:1500]  # Limit content length
+        
+        context_parts.append(f"Document {i} [{source_str}]:\n{content}\n")
+    
+    return "\n".join(context_parts)
+
 
 # Queue worker function
 def queue_worker():
@@ -421,18 +803,44 @@ async def prepare_model_args(request_body, request_headers):
     except Exception as e:
         logging.error(f"Error retrieving system message for user {user_id}: {e}")
 
-    # Add the system message to the messages array (unchanged)
-    if not app_settings.datasource:
-        messages = [
-            {
-                "role": "system",
-                "content": system_message
-            }
-        ]
+    # Extract the last user question for agentic retrieval
+    last_user_question = ""
+    for message in reversed(request_messages):
+        if message.get("role") == "user":
+            last_user_question = message.get("content", "")
+            break
     
-    # Get organization context (FRESH fetch when starting new conversation, cached for existing conversations)
-    companyName = request_body.get("companyName", "").strip()
-    conversation_id = request_body.get("conversation_id")
+    # Perform agentic retrieval if it's a complex question
+    agentic_context = ""
+    company_name = request_body.get("companyName", "").strip()
+    
+    if last_user_question and is_complex_question(last_user_question):
+        try:
+            retrieval_result = await execute_agentic_retrieval(
+                last_user_question, 
+                company_name,
+                request_messages
+            )
+            
+            if retrieval_result.get("documents"):
+                agentic_context = retrieval_result["enhanced_context"]
+                # Store retrieval metadata in request for later use
+                request_body["_agentic_retrieval"] = {
+                    "strategy": retrieval_result["strategy"],
+                    "document_count": len(retrieval_result["documents"])
+                }
+        except Exception as e:
+            logging.error(f"Agentic retrieval failed: {e}")
+            # Continue without agentic context if there's an error
+
+    # Build the messages array
+    if not app_settings.datasource:
+        # For non-RAG mode, enhance system message with agentic context
+        enhanced_system_message = system_message
+        if agentic_context:
+            enhanced_system_message = f"{system_message}\n\nAdditional Context:\n{agentic_context}"
+        
+        messages = [{"role": "system", "content": enhanced_system_message}]
     
     # Now add the conversation messages from the request
     for message in request_messages:
@@ -461,9 +869,6 @@ async def prepare_model_args(request_body, request_headers):
         application_name = app_settings.ui.title
         user_json = get_msdefender_user_json(authenticated_user_details, request_headers, conversation_id, application_name)
 
-    # print(f"System message used: {system_message}")
-    print(f"Final messages array: {messages}")
-
     model_args = {
         "messages": messages,
         "temperature": app_settings.azure_openai.temperature,
@@ -476,32 +881,42 @@ async def prepare_model_args(request_body, request_headers):
     }
     
     if app_settings.datasource:
-        # Get the existing data source configuration
+        # Get the existing data source configuration (UNCHANGED)
         data_source_config = app_settings.datasource.construct_payload_configuration(request=request)
 
         # Ensure "parameters" exists in the data source configuration
         if "parameters" not in data_source_config:
             data_source_config["parameters"] = {}
 
-        # Use the original system message (unchanged) for role_information
+        # Use the original system message for role_information
         data_source_config["parameters"]["role_information"] = system_message
         
         # Get the companyName from the request body
-        companyName = request_body.get("companyName", "").strip()
+        company_name = request_body.get("companyName", "").strip()
         
         # Apply the filter only if companyName has a value
-        if companyName:
-            # Convert companyName to lowercase
-            companyName = companyName.lower().strip('.')
-            data_source_config["parameters"]["filter"] = f"organization eq '{companyName}'"
-        # If companyName is empty, no filter will be applied in the data source
+        if company_name:
+            company_name = company_name.lower().strip('.')
+            data_source_config["parameters"]["filter"] = f"organization eq '{company_name}'"
 
         # Store the configuration into the extra_body
         model_args["extra_body"] = {
-            "data_sources": [
-                data_source_config
-            ]
+            "data_sources": [data_source_config]
         }
+        
+        # If we have agentic context, add it as additional user message
+        if agentic_context and messages:
+            # Insert the agentic context as a system message after the main system message
+            enhanced_system_content = f"Additional research context:\n{agentic_context}"
+            if len(messages) > 0 and messages[0]["role"] == "system":
+                # Enhance existing system message
+                messages[0]["content"] = f"{messages[0]['content']}\n\n{enhanced_system_content}"
+            else:
+                # Add as new system message
+                messages.insert(0, {"role": "system", "content": enhanced_system_content})
+            
+            # Update the messages in model_args
+            model_args["messages"] = messages
 
     model_args_clean = copy.deepcopy(model_args)
     if model_args_clean.get("extra_body"):
@@ -674,10 +1089,13 @@ async def conversation_internal(request_body, request_headers):
 
 @bp.route("/conversation", methods=["POST"])
 async def conversation():
+    """Conversation endpoint with agentic retrieval enabled"""
     if not request.is_json:
         return jsonify({"error": "request must be json"}), 415
+    
     request_json = await request.get_json()
-
+    request_json["use_agentic_retrieval"] = True  # Force agentic retrieval
+    
     return await conversation_internal(request_json, request.headers)
 
 

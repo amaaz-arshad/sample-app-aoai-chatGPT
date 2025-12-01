@@ -1,28 +1,25 @@
---extra-index-url https://download.pytorch.org/whl/test/cpu
-
-# PyTorch CPU-only packages
-torch==2.7.1
-transformers[torch]
-
 # Existing dependencies
-azure-identity==1.15.0
+azure-identity
+azure-ai-evaluation
+openai
 Flask[async]==3.0.3
-openai==1.55.3
-azure-search-documents==11.4.0b6
+azure-search-documents==11.7.0b2
 azure-storage-blob==12.17.0
 python-dotenv==1.0.0
+dotenv
 azure-cosmos==4.5.0
 quart==0.19.9
 uvicorn==0.24.0
-aiohttp==3.9.2
+aiohttp
 gunicorn==20.1.0
 pydantic-settings==2.2.1
 pydantic
 requests
 azure-core
 python-multipart
-sentence-transformers
 pdfminer.six
 PyMuPDF
 tiktoken
 six
+azure-ai-projects==2.0.0b1
+azure-mgmt-cognitiveservices
